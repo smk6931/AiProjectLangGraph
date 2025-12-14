@@ -1,5 +1,6 @@
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
+from app.user.user_schema import create_user_table
 
 pool: AsyncConnectionPool
 
@@ -9,11 +10,12 @@ async def init_pool():
   global pool
   pool = AsyncConnectionPool(
     conninfo = database_url,
-    kwargs={"row-factory": dict_row},
+    kwargs={"row_factory": dict_row},
     min_size= 1,
     max_size= 50,
-    open=True,
+    open=False,
   )
+  await pool.open()
   print("🔥 DB pool initialized")
 
 async def close_pool():
@@ -27,6 +29,16 @@ def get_pool() -> AsyncConnectionPool:
       raise RuntimeError("DB pool is not initialized")
   return pool
 
+tables = [
+  create_user_table
+]
+
+async def create_tables():
+  async with pool.connection() as conn:
+      async with conn.cursor() as cur:
+        for sql in tables:
+          await cur.execute(sql)
+        await conn.commit()
 
 async def fetch_one(sql:str, params = ()) -> dict | None:
   async with pool.connection() as conn:
