@@ -15,3 +15,4 @@ def dashboard_page():
     if st.button("로그아웃"):
         st.session_state.clear()
         st.session_state.page = "login"
+        st.rerun()
