@@ -5,6 +5,9 @@ class Users(BaseModel):
   nickname : str
   password_hash : str
 
+class UserLogin(BaseModel):
+  email: str
+
 create_user_table = """
 CREATE TABLE IF NOT EXISTS users (
     id BIGSERIAL PRIMARY KEY,

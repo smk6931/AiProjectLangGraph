@@ -1,5 +1,7 @@
 # app/ui/main.py
 import streamlit as st
+
+from pages.dashboard import dashboard_page
 import requests
 
 API_URL = "http://localhost:8080"
@@ -15,6 +17,8 @@ def go_login():
 def go_register():
     st.session_state.page = "register"
 
+
+
 # 로그인 화면
 if st.session_state.page == "login":
     st.title("🔐 Login")
@@ -24,11 +28,18 @@ if st.session_state.page == "login":
 
     if st.button("Login"):
         res = requests.post(
-            f"{API_URL}/login",
-            json={"user_email": email}
+            f"{API_URL}/user/login",
+            json={
+                "email": email
+            }
         )
         if res.status_code == 200:
             st.success("로그인 성공")
+            st.session_state_user_email = email
+            st.session_state.page = "dashboard"
+
+            dashboard_page()
+
         else:
             st.error("로그인 실패")
 

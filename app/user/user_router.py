@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Body
 
-from app.user.user_schema import Users
+from app.user.user_schema import UserLogin, Users
 from app.user.user_service import user_insert, user_select_byemail
 
 router = APIRouter()
@@ -11,8 +11,8 @@ async def user_create(body : Users):
   return response
 
 @router.post("/user/login")
-async def user_get_byemail(user_email : str = Body(...)):
-  response = await user_select_byemail(user_email)
+async def user_get_byemail(body : UserLogin):
+  response = await user_select_byemail(body)
   return response
 
 
