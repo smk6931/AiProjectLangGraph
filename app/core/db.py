@@ -74,6 +74,3 @@ async def execute_return(sql:str, params = ()) -> dict | None:
     except Exception as e:
       print("execute_insert 실행 실패", e)
       await conn.rollback()
-
-
-

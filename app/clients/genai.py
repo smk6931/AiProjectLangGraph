@@ -20,14 +20,10 @@ async def genai_generate_text(prompt: str):
             }
         )
         clean = re.sub(r'[\x00-\x1F\x7F]', ' ', response.text)
-
         end = time.perf_counter()
-
         print("genai_generate_text 완료", clean)
         print(f"⏱️ 텍스트 생성 시간: {end-start:.3f}초")
         return clean
-
-        
 
 # client = genai.Client(api_key = os.gotenv("GEMINI_API_KEY"))
 
