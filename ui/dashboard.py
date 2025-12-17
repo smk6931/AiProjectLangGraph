@@ -2,10 +2,9 @@
 import streamlit as st
 import pandas as pd
 import pydeck as pdk
-from sqlalchemy import select
-from app.core.db import SessionLocal
-from app.store.store_schema import Store
+import requests
 
+API_BASE_URL = "http://127.0.0.1:8080"
 
 def dashboard_page():
     st.title("🚀 Dashboard")
@@ -14,26 +13,27 @@ def dashboard_page():
     st.divider()
     st.subheader("🗺️ 전국 매장 현황")
 
-    # 1️⃣ DB에서 매장 데이터 조회
-    with SessionLocal() as session:
-        result = session.execute(select(Store))
-        stores_data = result.scalars().all()
-
-    if not stores_data:
-        st.warning("데이터베이스에 매장 데이터가 없습니다.")
+    # 1️⃣ API로 매장 데이터 조회
+    try:
+        response = requests.get(f"{API_BASE_URL}/store/get")
+        if response.status_code == 200:
+            stores_data = response.json()
+        elif response.status_code == 404:
+            st.warning("데이터가 없습니다.")
+            return
+        else:
+            st.error(f"데이터 조회 실패: {response.status_code}")
+            return
+    except Exception as e:
+        st.error(f"API 연결 실패: {e} (백엔드 서버가 켜져 있는지 확인하세요)")
         return
 
-    # DataFrame 변환
-    stores = pd.DataFrame([
-        {
-            "store_id": s.store_id,
-            "store_name": s.store_name,
-            "city": s.city,
-            "lat": s.lat,
-            "lon": s.lon
-        }
-        for s in stores_data
-    ])
+    if not stores_data:
+        st.warning("데이터가 없습니다.")
+        return
+
+    # DataFrame 변환 (API 응답은 JSON 리스트이므로 바로 변환 가능)
+    stores = pd.DataFrame(stores_data)
 
     # 2️⃣ 지도 레이어
     layer = pdk.Layer(

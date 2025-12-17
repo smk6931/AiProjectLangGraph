@@ -34,8 +34,10 @@ from app.report.report_schema import StoreReport  # noqa: F401
 
 async def init_pool():
     global pool
+    # psycopg는 "postgresql://"로 시작하는 표준 연결 문자열만 인식합니다. (+psycopg 드라이버 명시 제외)
+    conninfo = database_url.replace("+psycopg", "")
     pool = AsyncConnectionPool(
-        conninfo=database_url,
+        conninfo=conninfo,
         kwargs={"row_factory": dict_row},
         min_size=1,
         max_size=50,
