@@ -21,6 +21,11 @@ SessionLocal = sessionmaker(
 
 base = declarative_base()
 
+# Import all SQLAlchemy models so Base.metadata is populated for Alembic.
+# Keep imports grouped in a single place to avoid missing tables in migrations.
+from app import models  # noqa: F401
+
+
 async def init_pool():
   global pool
   pool = AsyncConnectionPool(
