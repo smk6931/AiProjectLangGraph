@@ -19,8 +19,8 @@ app = FastAPI(lifespan=lifespan)
 
 app.include_router(user_router.router)
 
-response = genai.genai_generate_text("안녕하세요")
-print("genai 실행", response)
+# response = genai.genai_generate_text("안녕하세요")
+# print("genai 실행", response)
 
 @app.get("/")
 def root():
