@@ -7,4 +7,4 @@ PostGre 연결 설정
   -e POSTGRES_PASSWORD=1234 `
   -e POSTGRES_DB=ai_project `
   -p 5432:5432 `
-  postgres:16
+  pgvector/pgvector:pg16

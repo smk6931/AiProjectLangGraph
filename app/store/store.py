@@ -1,12 +1,2 @@
-create_store_table = """
-  CREATE TABLE stores (
-      store_id INT PRIMARY KEY,
-      store_name VARCHAR(100) NOT NULL,
-      region VARCHAR(50) NOT NULL,          -- 서울 / 대구 / 강원 등
-      city VARCHAR(50) NOT NULL,            -- UI·지도 표시용
-      lat DOUBLE PRECISION NOT NULL,         -- 위도
-      lon DOUBLE PRECISION NOT NULL,         -- 경도
-      open_date DATE,
-      franchise_type VARCHAR(20)             -- 직영 / 가맹
-  );
-""";
+# 이 파일은 더 이상 사용되지 않습니다.
+# Store 모델은 app/store/store_schema.py 로 이동되었습니다.

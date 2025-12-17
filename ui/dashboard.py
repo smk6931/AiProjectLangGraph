@@ -2,20 +2,37 @@
 import streamlit as st
 import pandas as pd
 import pydeck as pdk
+from sqlalchemy import select
+from app.core.db import SessionLocal
+from app.store.store_schema import Store
+
 
 def dashboard_page():
     st.title("🚀 Dashboard")
     st.write(f"환영합니다 👋 {st.session_state.get('user_email')}")
 
     st.divider()
-    st.subheader("🗺️ 전국 매장 현황 (임시 데이터)")
+    st.subheader("🗺️ 전국 매장 현황")
 
-    # 1️⃣ 임시 매장 데이터
+    # 1️⃣ DB에서 매장 데이터 조회
+    with SessionLocal() as session:
+        result = session.execute(select(Store))
+        stores_data = result.scalars().all()
+
+    if not stores_data:
+        st.warning("데이터베이스에 매장 데이터가 없습니다.")
+        return
+
+    # DataFrame 변환
     stores = pd.DataFrame([
-        {"store_id": 1, "store_name": "서울점", "city": "서울", "lat": 37.5665, "lon": 126.9780},
-        {"store_id": 2, "store_name": "부산점", "city": "부산", "lat": 35.1796, "lon": 129.0756},
-        {"store_id": 3, "store_name": "대구점", "city": "대구", "lat": 35.8714, "lon": 128.6014},
-        {"store_id": 4, "store_name": "강원점", "city": "강원", "lat": 37.8228, "lon": 128.1555},
+        {
+            "store_id": s.store_id,
+            "store_name": s.store_name,
+            "city": s.city,
+            "lat": s.lat,
+            "lon": s.lon
+        }
+        for s in stores_data
     ])
 
     # 2️⃣ 지도 레이어
