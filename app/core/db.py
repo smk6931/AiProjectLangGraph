@@ -7,10 +7,13 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 
 pool: AsyncConnectionPool
 
-# database_url = "postgresql://ai_user:1234@localhost:5432/ai_project"
-database_url = "postgresql+psycopg://ai_user:1234@localhost:5432/ai_project"
+database_url = "postgresql://ai_user:1234@localhost:5432/ai_project"
+# database_url = "postgresql+psycopg://ai_user:1234@localhost:5432/ai_project"
 
-engine = create_engine(database_url, echo=True)
+# SQLAlchemy는 "postgresql://"만 주면 기본적으로 psycopg2를 찾으므로,
+# 설치된 psycopg(v3)를 사용하도록 스키마를 명시해줍니다.
+engine = create_engine(database_url.replace(
+    "postgresql://", "postgresql+psycopg://"), echo=True)
 
 SessionLocal = sessionmaker(
     autocommit=False,
@@ -34,10 +37,8 @@ from app.report.report_schema import StoreReport  # noqa: F401
 
 async def init_pool():
     global pool
-    # psycopg는 "postgresql://"로 시작하는 표준 연결 문자열만 인식합니다. (+psycopg 드라이버 명시 제외)
-    conninfo = database_url.replace("+psycopg", "")
     pool = AsyncConnectionPool(
-        conninfo=conninfo,
+        conninfo=database_url,
         kwargs={"row_factory": dict_row},
         min_size=1,
         max_size=50,
