@@ -1,4 +1,6 @@
+from debug_utils import render_session_state_viewer
 from menu_page import menu_page
+from review_page import review_page
 from dashboard import dashboard_page
 from register import register_page
 from login import login_page
@@ -7,8 +9,9 @@ import sys
 import os
 
 # ui 디렉토리를 path에 추가 (필요시)
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+st.session_state.user_email = "email"
 
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 st.set_page_config(page_title="AI Project", layout="wide")
 
@@ -27,23 +30,37 @@ if "user_email" in st.session_state:
         st.title("📌 관리 메뉴")
         st.write(f"접속 중: {st.session_state.user_email}")
 
+        # 페이지 이름과 내부 키 매핑
+        nav_options = {
+            "🏠 대시보드": "dashboard",
+            "🍴 메뉴 조회": "menu_page",
+            "💬 리뷰 관리": "review_page"
+        }
+
+        # 현재 페이지의 index 찾기
+        current_idx = 0
+        current_page = st.session_state.page
+        for i, val in enumerate(nav_options.values()):
+            if val == current_page:
+                current_idx = i
+                break
+
         selection = st.radio(
             "이동하기",
-            ["대시보드", "메뉴 조회"],
-            index=0 if st.session_state.page == "dashboard" else 1
+            list(nav_options.keys()),
+            index=current_idx
         )
 
-        # 라디오 버튼 선택에 따른 페이지 변경
-        if selection == "대시보드":
-            st.session_state.page = "dashboard"
-        elif selection == "메뉴 조회":
-            st.session_state.page = "menu_page"
+        st.session_state.page = nav_options[selection]
 
         st.divider()
         if st.button("로그아웃"):
             st.session_state.clear()
             st.session_state.page = "login"
             st.rerun()
+
+        # --- 디버그 세션 조회 컴포넌트 추가 ---
+        render_session_state_viewer()
 
 # --- 페이지 라우팅 ---
 if st.session_state.page == "login":
@@ -57,3 +74,6 @@ elif st.session_state.page == "dashboard":
 
 elif st.session_state.page == "menu_page":
     menu_page()
+
+elif st.session_state.page == "review_page":
+    review_page()

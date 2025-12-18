@@ -1,8 +1,7 @@
 # app/ui/login.py
 import streamlit as st
-import requests
+from api_utils import post_api
 
-API_URL = "http://localhost:8080"
 
 def login_page():
     st.title("🔐 Login")
@@ -11,19 +10,15 @@ def login_page():
     password = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        res = requests.post(
-            f"{API_URL}/user/login",
-            json={"email": email}
-        )
+        res_data = post_api("/user/login", json_data={"email": email})
 
-        if res.status_code == 200:
+        if res_data:
             st.session_state.user_email = email
             st.session_state.page = "dashboard"
             st.rerun()
-        else:
-            st.error("로그인 실패")
 
     st.button("회원가입", on_click=lambda: go_register())
+
 
 def go_register():
     st.session_state.page = "register"

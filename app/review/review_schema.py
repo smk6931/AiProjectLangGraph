@@ -35,6 +35,8 @@ class Review(base):
 
     review_id = Column(Integer, primary_key=True, index=True)
     store_id = Column(Integer, ForeignKey("stores.store_id"), nullable=False)
+    order_id = Column(Integer, ForeignKey("orders.order_id"),
+                      nullable=True)  # 어떤 주문에 대한 리뷰인지 연결
     menu_id = Column(Integer, ForeignKey("menus.menu_id"), nullable=False)
     rating = Column(Integer, nullable=False)  # 1~5
     review_text = Column(Text, nullable=False)
