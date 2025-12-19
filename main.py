@@ -7,6 +7,7 @@ from app.store import store_router
 from app.menu import menu_router
 from app.order import order_router
 from app.review import review_router
+from app.report import report_router
 
 
 @asynccontextmanager
@@ -26,6 +27,7 @@ app.include_router(store_router.router)
 app.include_router(menu_router.router)
 app.include_router(order_router.router)
 app.include_router(review_router.router)
+app.include_router(report_router.router)
 
 # response = genai.genai_generate_text("안녕하세요")
 # print("genai 실행", response)
