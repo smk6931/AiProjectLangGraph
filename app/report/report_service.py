@@ -7,39 +7,34 @@ from app.clients.genai import genai_generate_text
 from app.order.order_service import select_daily_sales_by_store
 from app.review.review_service import select_reviews_by_store
 
-from app.report.report_graph import report_app
+from app.report.report_autonomous import autonomous_report_app
+
 
 async def generate_ai_store_report(store_id: int, store_name: str):
     """
-    LangGraph 기반의 AI 전략 리포트 생성 워크플로우 실행
+    LangGraph 에이전트 기반의 자율형 리포트 생성 프로세스 실행
     """
     initial_state = {
         "store_id": store_id,
         "store_name": store_name,
-        "sales_data": [],
-        "reviews_data": [],
-        "raw_report_json": "",
-        "final_report": {}
+        "messages": []
     }
-    
+
     try:
-        # 그래프 실행
-        final_state = await report_app.ainvoke(initial_state)
-        
-        # UI에서 사용하기 좋게 결과 가공
-        report_dict = final_state["final_report"]
-        report_dict["store_id"] = store_id
-        report_dict["report_date"] = str(date.today())
-        
-        return report_dict
-        
-    except Exception as e:
-        print(f"❌ LangGraph 실행 실패: {e}")
+        # 에이전트 실행
+        await autonomous_report_app.ainvoke(initial_state)
+
+        # 결과 조회
+        report = await select_latest_report(store_id)
+        if report:
+            print(f"✅ [Service] 리포트 생성 완료")
+            return report
         return None
 
     except Exception as e:
-        print(f"❌ 리포트 생성 실패: {e}")
+        print(f"❌ [Service] 에러 발생: {e}")
         return None
+
 
 async def select_latest_report(store_id: int):
     """
