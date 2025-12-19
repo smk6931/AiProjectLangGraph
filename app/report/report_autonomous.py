@@ -73,21 +73,31 @@ async def save_strategic_report(
 # 3. 노드(Node) 정의
 
 async def call_model(state: AgentState):
-    """LLM이 다음 행동을 결정하는 노드"""
-    print("🤖 [Agent] 판단 중...")
+    """LLM이 현재 상태를 보고 다음 행동을 결정하는 노드"""
+    print("\n" + "═"*60)
+    print(f"🤖 [Agent: Reasoning] '{state['store_name']}' 지점 분석 중...")
     
     messages = state.get("messages", [])
     
-    # 💡 초기 메시지가 없으면 시스템 지침 생성
+    # 1. AI가 읽을 이전 메시지 요약 로그
+    if messages:
+        last_msg = messages[-1]
+        print(f"� [Input Context]: 마지막 메시지 타입 -> {type(last_msg).__name__}")
+        if hasattr(last_msg, 'content') and last_msg.content:
+            # 내용이 너무 길면 앞부분만 출력
+            preview = last_msg.content[:100] + "..." if len(last_msg.content) > 100 else last_msg.content
+            print(f"   내용 요약: {preview}")
+
+    # 2. 초기 메시지 설정
     new_messages = []
     if not messages:
-        sys_msg = SystemMessage(content=f"당신은 '{state['store_name']}' 지점의 경영 전략가입니다. fetch_store_data로 데이터를 가져온 뒤, 마케팅/운영 전략을 분석하여 save_strategic_report로 저장하세요.")
+        print("🚩 [System] 분석 프로세스를 처음 시작합니다. 초기 지침 생성 중...")
+        sys_msg = SystemMessage(content=f"당신은 '{state['store_name']}' 지점의 경영 전략가입니다. fetch_store_data로 데이터를 수집하고 분석한 뒤, 반드시 save_strategic_report로 리포트를 저장해야 합니다. 판단 근거를 한국어로 명확히 밝혀주세요.")
         prompt = HumanMessage(content="분석을 시작하고 리포트를 저장해주세요.")
         messages = [sys_msg, prompt]
-        # 초기 메시지도 상태에 누적되도록 추가
         new_messages.extend(messages)
 
-    # 사용자가 제안한 gemini-2.0-flash 모델을 사용하여 안정성을 확보합니다.
+    # LLM 설정
     llm = ChatGoogleGenerativeAI(
         model="gemini-2.0-flash", 
         google_api_key=os.getenv("GEMINI_API_KEY"),
@@ -95,11 +105,23 @@ async def call_model(state: AgentState):
     )
     llm_with_tools = llm.bind_tools([fetch_store_data, save_strategic_report])
     
-    # 전체 대화 문맥(messages)을 넘겨야 함
+    # AI에게 생각 전개 요청
     response = await llm_with_tools.ainvoke(messages)
-    new_messages.append(response)
     
-    # 리턴된 new_messages는 add_messages 리듀서에 의해 기존 state.messages에 합쳐집니다.
+    # 3. AI의 생각(Thought) 출력
+    if response.content:
+        print(f"\n💡 [AI Thought]:\n{response.content}")
+    
+    # 4. AI가 결정한 툴 호출 및 매개변수 매핑 로그
+    if response.tool_calls:
+        print(f"\n🎯 [Tool Call Decision]:")
+        for tool_call in response.tool_calls:
+            print(f"   함수명: {tool_call['name']}")
+            print(f"   매핑된 인자(Args): {json.dumps(tool_call['args'], indent=5, ensure_ascii=False)}")
+    
+    new_messages.append(response)
+    print("═"*60)
+    
     return {"messages": new_messages}
 
 # 4. 그래프(Graph) 빌드
