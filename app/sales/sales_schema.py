@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import date
-from sqlalchemy import Column, Integer, Date, Numeric, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, Date, Numeric, ForeignKey, UniqueConstraint, String
 from app.core.db import base
 
 # ---------- API / JSON 용 Pydantic 스키마 ----------
@@ -24,6 +24,9 @@ class SalesDaily(base):
     sale_date = Column(Date, nullable=False)
     total_sales = Column(Numeric(15, 2), default=0)
     total_orders = Column(Integer, default=0)
+    
+    # 날씨 정보 추가 (비, 맑음 등)
+    weather_info = Column(String(50), nullable=True)
 
     # 한 매장의 같은 날짜 데이터는 하나만 존재해야 함 (중복 방지)
     __table_args__ = (

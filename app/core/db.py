@@ -82,7 +82,6 @@ async def execute(sql: str, params=()):
             async with conn.cursor() as cur:
                 await cur.execute(sql, params)
             await conn.commit()
-
         except Exception as e:
             print("execute 실행 실패", e)
             await conn.rollback()

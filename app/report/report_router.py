@@ -3,15 +3,17 @@ from app.report.report_service import generate_ai_store_report, select_latest_re
 
 router = APIRouter(prefix="/report", tags=["report"])
 
+
 @router.post("/generate/{store_id}")
-async def post_generate_report(store_id: int, store_name: str):
+async def post_generate_report(store_id: int, store_name: str, mode: str = "sequential"):
     """
-    AI 전략 리포트 생성 요청
+    AI 전략 리포트 생성 요청 (mode: sequential 또는 autonomous)
     """
-    result = await generate_ai_store_report(store_id, store_name)
+    result = await generate_ai_store_report(store_id, store_name, mode)
     if not result:
         raise HTTPException(status_code=500, detail="리포트 생성에 실패했습니다.")
     return result
+
 
 @router.get("/latest/{store_id}")
 async def get_latest_report(store_id: int):

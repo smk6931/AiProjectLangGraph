@@ -39,7 +39,7 @@ def menu_page():
             df_display = df_display[df_display["카테고리"].isin(category_filter)]
 
         # 데이터 테이블 표시
-        st.dataframe(df_display, use_container_width=True)
+        st.dataframe(df_display, width='stretch')
 
         # 상세 요약 통계
         st.divider()

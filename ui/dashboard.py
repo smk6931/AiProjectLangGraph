@@ -48,7 +48,7 @@ def dashboard_page():
     # 지도 출력 및 선택 이벤트 감지 (마우스 휠 줌 활성화)
     selected_points = st.plotly_chart(
         fig, 
-        use_container_width=True, 
+        width='stretch', 
         on_select="rerun",
         config={'scrollZoom': True, 'displayModeBar': False}
     )
@@ -85,7 +85,7 @@ def dashboard_page():
 
     with col_btn:
         st.write("")  # 간격 맞춤
-        if st.button("📊 상세 보기", use_container_width=True, type="primary"):
+        if st.button("📊 상세 보기", width='stretch', type="primary"):
             show_sales_dialog(
                 store_row_manual['store_id'], store_row_manual['store_name'])
 
