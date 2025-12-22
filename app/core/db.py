@@ -33,6 +33,7 @@ from app.review.review_schema import Review, ReviewAnalysis  # noqa: F401
 from app.order.order_schema import Order  # noqa: F401
 from app.sales.sales_schema import SalesDaily  # noqa: F401
 from app.report.report_schema import StoreReport  # noqa: F401
+from app.manual.manual_schema import Manual  # noqa: F401
 
 
 async def init_pool():
