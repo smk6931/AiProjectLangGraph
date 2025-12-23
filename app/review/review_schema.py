@@ -1,7 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Index, Numeric, JSON
-from sqlalchemy.orm import mapped_column
 from pgvector.sqlalchemy import Vector
 from app.core.db import base
 
@@ -44,7 +43,7 @@ class Review(base):
     delivery_app = Column(String(50), nullable=True)  # 배민/쿠팡이츠 등
 
     # AI 검색(Semantic Search)을 위한 임베딩은 조회 빈도가 높으므로 본 테이블에 유지
-    embedding = mapped_column(Vector(1536), nullable=True)
+    embedding = Column(Vector(1536), nullable=True)
 
 
 class ReviewAnalysis(base):

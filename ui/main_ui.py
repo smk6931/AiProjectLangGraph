@@ -4,6 +4,7 @@ from review_page import review_page
 from dashboard import dashboard_page
 from register import register_page
 from login import login_page
+from inquiry_page import inquiry_page
 import streamlit as st
 import sys
 import os
@@ -33,6 +34,7 @@ if "user_email" in st.session_state:
         # 페이지 이름과 내부 키 매핑
         nav_options = {
             "🏠 대시보드": "dashboard",
+            "🤖 AI 매니저": "inquiry_page", 
             "🍴 메뉴 조회": "menu_page",
             "💬 리뷰 관리": "review_page"
         }
@@ -71,6 +73,9 @@ elif st.session_state.page == "register":
 
 elif st.session_state.page == "dashboard":
     dashboard_page()
+
+elif st.session_state.page == "inquiry_page":
+    inquiry_page()
 
 elif st.session_state.page == "menu_page":
     menu_page()

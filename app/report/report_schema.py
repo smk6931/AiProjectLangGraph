@@ -2,7 +2,6 @@ from pydantic import BaseModel
 from datetime import date, datetime
 from typing import Dict, Any
 from sqlalchemy import Column, Integer, String, Text, Date, ForeignKey, JSON
-from sqlalchemy.orm import mapped_column
 from app.core.db import base
 
 # ---------- API / JSON 용 Pydantic 스키마 ----------

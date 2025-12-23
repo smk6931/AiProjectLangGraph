@@ -8,7 +8,6 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 pool: AsyncConnectionPool
 
 database_url = "postgresql://ai_user:1234@localhost:5432/ai_project"
-# database_url = "postgresql+psycopg://ai_user:1234@localhost:5432/ai_project"
 
 # SQLAlchemy는 "postgresql://"만 주면 기본적으로 psycopg2를 찾으므로,
 # 설치된 psycopg(v3)를 사용하도록 스키마를 명시해줍니다.
@@ -34,6 +33,8 @@ from app.order.order_schema import Order  # noqa: F401
 from app.sales.sales_schema import SalesDaily  # noqa: F401
 from app.report.report_schema import StoreReport  # noqa: F401
 from app.manual.manual_schema import Manual  # noqa: F401
+from app.inquiry.inquiry_schema import StoreInquiry  # noqa: F401
+from app.policy.policy_schema import Policy  # noqa: F401
 
 
 async def init_pool():
