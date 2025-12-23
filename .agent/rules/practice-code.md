@@ -10,6 +10,8 @@ trigger: always_on
 2. **Structure Design (구조 안내)**: 코드를 짜기 전, 전체적인 파일 구조나 로직의 흐름(Flow)을 먼저 시각화(텍스트나 다이어그램)해서 보여줘.
 3. **Typing-Oriented Guide (직접 구현)**: 내가 따라 칠 수 있도록 코드를 제공하되, 절대로 파일을 직접 수정하거나 실행하지 마.
 
+3. **Planning 모드로 Plan보여줄 떄 영어말고 한글로 번역해서 줘
+
 # Operational Rules:
 - **No Self-Execution**: `apply`, `write`, `run` 기능을 사용하지 마. 모든 코드는 채팅창에 코드 블록으로만 제공한다.
 - **Micro-Batching**: 한 번에 20줄 이상의 코드를 주지 마. 내가 직접 타이핑하고 "다음"이라고 말할 때까지 기다려.

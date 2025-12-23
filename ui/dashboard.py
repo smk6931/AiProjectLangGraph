@@ -19,41 +19,71 @@ def dashboard_page():
         return
     stores = pd.DataFrame(stores_data)
 
-    # 2️⃣ 지점 현황 지도 (Plotly 활용)
-    st.subheader("🗺️ 전국 매장 현황 (지점을 클릭하세요!)")
+    # 2️⃣ 지점 현황 지도 & 리스트 (2단 레이아웃)
+    st.subheader("🗺️ 전국 매장 현황")
 
-    # Plotly Scatter Map 생성
-    fig = px.scatter_mapbox(
-        stores,
-        lat="lat",
-        lon="lon",
-        hover_name="store_name",
-        hover_data={"city": True, "lat": False,
-                    "lon": False, "store_id": True},
-        color_discrete_sequence=["#FF4B4B"],
-        zoom=6,
-        height=500
-    )
+    col_map, col_list = st.columns([3, 1])
 
-    # 지도 스타일 설정 (고급스러운 어두운 테마)
-    fig.update_layout(
-        mapbox_style="carto-darkmatter",
-        margin={"r": 0, "t": 0, "l": 0, "b": 0},
-        clickmode='event+select',
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="white")
-    )
+    with col_map:
+        # Plotly Scatter Map 생성
+        fig = px.scatter_mapbox(
+            stores,
+            lat="lat",
+            lon="lon",
+            text="city",  # 텍스트로 표시할 컬럼 (예: 서울, 부산)
+            hover_name="store_name",
+            hover_data={"city": True, "lat": False,
+                        "lon": False, "store_id": True},
+            color_discrete_sequence=["#FF4B4B"],
+            zoom=6,
+            height=600  # 세로로 긴 지도 비율에 맞춤
+        )
 
-    # 지도 출력 및 선택 이벤트 감지 (마우스 휠 줌 활성화)
-    selected_points = st.plotly_chart(
-        fig, 
-        width='stretch', 
-        on_select="rerun",
-        config={'scrollZoom': True, 'displayModeBar': False}
-    )
+        # 텍스트 스타일 및 마커 설정
+        fig.update_traces(
+            mode='markers+text',
+            textposition='top right',
+            textfont=dict(size=11, color="white"),
+            marker=dict(size=12)
+        )
 
-    # 3️⃣ 지도 클릭 이벤트 처리
+        # 지도 스타일 설정 (고급스러운 어두운 테마)
+        fig.update_layout(
+            mapbox_style="carto-darkmatter",
+            margin={"r": 0, "t": 0, "l": 0, "b": 0},
+            clickmode='event+select',
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="white")
+        )
+
+        # 지도 출력 및 선택 이벤트 감지 (마우스 휠 줌 활성화)
+        selected_points = st.plotly_chart(
+            fig, 
+            use_container_width=True, 
+            on_select="rerun",
+            config={'scrollZoom': True, 'displayModeBar': False}
+        )
+
+    # 3️⃣ 우측 매장 리스트
+    with col_list:
+        st.write("#### 🏪 매장 선택")
+        st.caption("목록에서 선택하거나 지도를 클릭하세요.")
+        
+        selected_store_name = st.selectbox(
+            "매장 목록",
+            stores["store_name"],
+            label_visibility="collapsed"
+        )
+        
+        store_row_manual = stores[stores["store_name"] == selected_store_name].iloc[0]
+        
+        st.info(f"📍 **{store_row_manual['city']}**\n\n{store_row_manual['store_name']}")
+        
+        if st.button("📊 상세 보기", type="primary", use_container_width=True):
+             show_sales_dialog(store_row_manual['store_id'], store_row_manual['store_name'])
+
+    # 4️⃣ 지도 클릭 이벤트 처리
     if selected_points and "selection" in selected_points:
         points = selected_points["selection"]["points"]
         if points:
@@ -68,28 +98,5 @@ def dashboard_page():
                 # 클릭 즉시 매출 다이얼로그 호출
                 show_sales_dialog(
                     store_row['store_id'], store_row['store_name'])
-
-    st.divider()
-
-    # 4️⃣ 기존 선택 박스 (보조용)
-    st.write("💡 지도에서 점을 클릭하거나 아래 리스트에서 선택하여 정보를 확인할 수 있습니다.")
-    col_sel, col_btn = st.columns([3, 1])
-
-    with col_sel:
-        selected_store_name = st.selectbox(
-            "매장을 선택하세요",
-            stores["store_name"]
-        )
-        store_row_manual = stores[stores["store_name"]
-                                  == selected_store_name].iloc[0]
-
-    with col_btn:
-        st.write("")  # 간격 맞춤
-        if st.button("📊 상세 보기", width='stretch', type="primary"):
-            show_sales_dialog(
-                store_row_manual['store_id'], store_row_manual['store_name'])
-
-    st.info(
-        f"📍 현재 선택박스 기준: **{store_row_manual['store_name']}** ({store_row_manual['city']})")
 
     st.divider()
