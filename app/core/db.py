@@ -28,7 +28,7 @@ base = declarative_base()
 from app.menu.menu_schema import Menu  # noqa: F401
 from app.user.user_schema import User  # noqa: F401
 from app.store.store_schema import Store  # noqa: F401
-from app.review.review_schema import Review, ReviewAnalysis  # noqa: F401
+from app.review.review_schema import Review  # noqa: F401
 from app.order.order_schema import Order  # noqa: F401
 from app.sales.sales_schema import SalesDaily  # noqa: F401
 from app.report.report_schema import StoreReport  # noqa: F401

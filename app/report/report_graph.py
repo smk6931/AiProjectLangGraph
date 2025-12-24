@@ -157,8 +157,7 @@ async def analyze_data_node(state: ReportState):
     응답은 반드시 아래 JSON 형식으로만 할 것:
     {{
         "data_evidence": {{
-            "sales_analysis": "날씨, 메뉴, 요일별 데이터를 종합한 상세 매출 분석 (마크다운 표 포함 필수)",
-            "review_analysis": "평점과 리뷰 결합 분석"
+            "sales_analysis": "날씨, 메뉴, 요일별 데이터를 종합한 상세 매출 분석 (마크다운 표 포함 필수)"
         }},
         "summary": "종합 분석 요약 (3줄)",
         "marketing_strategy": "외부 요인(날씨 등)을 고려한 마케팅 제안",

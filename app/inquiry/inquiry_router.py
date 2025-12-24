@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from app.inquiry.inquiry_agent import process_inquiry
+from app.inquiry.inquiry_agent import run_search_check, run_final_answer_stream
 from app.inquiry.inquiry_schema import InquiryResponse
 
 router = APIRouter(prefix="/inquiry", tags=["Inquiry"])
@@ -12,33 +12,49 @@ class InquiryRequest(BaseModel):
     question: str
 
 
-@router.post("/ask", response_model=dict)
-async def ask_question(request: InquiryRequest):
+@router.post("/check", response_model=dict)
+async def check_database_search(request: InquiryRequest):
     """
-    가맹점 질문 처리 API
-    LangGraph 에이전트가 질문을 분석하고, 적절한 데이터 소스(매출/매뉴얼/정책)에서
-    정보를 검색하여 답변을 생성합니다.
-    Args:
-        request: 매장 ID와 질문 내용
-    Returns:
-        답변 및 메타데이터 (카테고리, inquiry_id 등)
+    [Steps 1] DB 검색 & 유사도 확인 API
+    질문을 받아 내부 DB(매뉴얼/정책)를 검색하고, 
+    가장 유사한 문서와 점수를 반환합니다. (답변 생성 X)
     """
-    try:
-        result = await process_inquiry(
-            store_id=request.store_id,
-            question=request.question
-        )
-        
-        return {
-            "success": True,
-            "data": result
-        }
+    from app.inquiry.inquiry_agent import run_search_check
     
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"질문 처리 중 오류 발생: {str(e)}"
-        )
+    result = await run_search_check(request.store_id, request.question)
+    return {
+        "success": True,
+        "data": result
+    }
+
+
+class GenerateRequest(BaseModel):
+    store_id: int
+    question: str
+    category: str
+    mode: str # 'db' or 'web'
+    context_data: list = [] # DB 모드일 때 사용할 검색 결과 리스트
+
+
+@router.post("/generate/stream")
+async def generate_answer_stream(request: GenerateRequest):
+    """
+    [Steps 2] 최종 답변 생성 (Streaming)
+    사용자가 선택한 모드(DB or Web)에 따라 최종 답변을 스트리밍합니다.
+    """
+    from fastapi.responses import StreamingResponse
+    from app.inquiry.inquiry_agent import run_final_answer_stream
+    
+    return StreamingResponse(
+        run_final_answer_stream(
+            request.store_id, 
+            request.question, 
+            request.category, 
+            request.mode, 
+            request.context_data
+        ),
+        media_type="application/x-ndjson"
+    )
 
 
 @router.get("/history/{store_id}", response_model=list)

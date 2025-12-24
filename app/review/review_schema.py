@@ -18,13 +18,7 @@ class ReviewSchema(BaseModel):
     embedding: list[float] | None = None  # 1536 차원 임베딩
 
 
-class ReviewAnalysisSchema(BaseModel):
-    analysis_id: int
-    review_id: int
-    sentiment_score: float
-    classification: list[str]  # JSON
-    ai_reply: str
-    model_version: str
+
 
 # ---------- Alembic / DB 매핑용 SQLAlchemy 모델 ----------
 
@@ -46,23 +40,4 @@ class Review(base):
     embedding = Column(Vector(1536), nullable=True)
 
 
-class ReviewAnalysis(base):
-    __tablename__ = "review_analysis"
 
-    analysis_id = Column(Integer, primary_key=True, index=True)
-    review_id = Column(Integer, ForeignKey(
-        "reviews.review_id"), unique=True, nullable=False)
-
-    # 감정 점수: -1.0 (매우 부정) ~ 1.0 (매우 긍정)
-    sentiment_score = Column(Numeric(3, 2), nullable=True)
-
-    # 분류 태그 (JSON): ["맛", "양", "배달시간"]
-    classification = Column(JSON, nullable=True)
-
-    # AI 제안 답글
-    ai_reply = Column(Text, nullable=True)
-
-    # 분석에 사용된 모델 버전 (예: "gpt-4o", "gemini-1.5-pro")
-    model_version = Column(String(50), nullable=True)
-
-    analyzed_at = Column(DateTime, default=datetime.now)

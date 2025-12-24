@@ -45,6 +45,23 @@ def show_sales_dialog(store_id, store_name):
                     key=f"modal_date_{store_id}",
                     label_visibility="collapsed"
                 )
+            
+            # --- [NEW] 월간 매출 합계 (진실 규명 섹션) ---
+            # 선택된 '월(Month)'의 전체 매출을 계산해서 보여줌
+            if selected_date:
+                sel_year = selected_date.year
+                sel_month = selected_date.month
+                
+                # 해당 월 데이터 필터링
+                mask_month = (df_sales['order_date'].astype(str).str.startswith(f"{sel_year}-{sel_month:02d}"))
+                df_month = df_sales[mask_month]
+                
+                month_total_rev = df_month['daily_revenue'].sum() if not df_month.empty else 0
+                month_total_orders = df_month['total_orders'].sum() if 'total_orders' in df_month.columns else 0
+                
+                with col_top1:
+                    st.info(f"💰 **{sel_year}년 {sel_month}월 총 매출**: {int(month_total_rev):,}원 (주문 {int(month_total_orders):,}건)")
+            # ---------------------------------------------
 
             # 1. 매출 그래프 (Altair를 사용하여 커스텀)
             st.write("📈 **일별 매출 추이**")
@@ -110,22 +127,12 @@ def show_sales_dialog(store_id, store_name):
         # 최신 리포트 불러오기
         report_data = get_api(f"/report/latest/{store_id}")
 
-        # 모드 선택 UI 추가
-        st.write("---")
-        gen_mode = st.radio(
-            "🚀 생성 모드 선택",
-            ["순차적 실행 (Fixed DAG)", "자율 에이전트 (Autonomous Agent)"],
-            help="순차적 실행은 정해진 단계(수집->분석->검증)를 따르고, 자율 에이전트는 AI가 스스로 도구를 선택하여 업무를 완수합니다.",
-            horizontal=True
-        )
-        mode_key = "sequential" if "순차적" in gen_mode else "autonomous"
-
         col_btn1, col_btn2 = st.columns([1, 2])
         if col_btn1.button("✨ 새 리포트 생성", key=f"gen_report_{store_id}"):
-            with st.spinner(f"AI가 {gen_mode} 모드로 데이터를 분석 중입니다..."):
+            with st.spinner("AI가 데이터를 분석하여 리포트를 생성 중입니다..."):
                 import requests
                 from api_utils import API_BASE_URL
-                params = {"store_name": store_name, "mode": mode_key}
+                params = {"store_name": store_name, "mode": "sequential"}
                 resp = requests.post(
                     f"{API_BASE_URL}/report/generate/{store_id}", params=params)
 
@@ -137,7 +144,7 @@ def show_sales_dialog(store_id, store_name):
                         st.info("⚡ 오늘 이미 생성된 리포트가 있어 캐시(Memory)에서 즉시 불러왔습니다.")
                         st.toast("캐시 데이터 로드 완료!", icon="⚡")
                     else:
-                        st.success(f"새로운 리포트가 {gen_mode} 모드로 생성되었습니다!")
+                        st.success("새로운 리포트가 생성되었습니다!")
                         st.toast("AI 리포트 생성 완료!", icon="✨")
 
                     # 실행 로그 보여주기
@@ -235,7 +242,7 @@ def show_sales_dialog(store_id, store_name):
                 if evidence:
                     with st.expander("🧐 AI가 분석한 세부 근거 보기"):
                         st.write(f"**매출 분석:** {evidence.get('sales_analysis')}")
-                        st.write(f"**리뷰 분석:** {evidence.get('review_analysis')}")
+
             # -------------------------------
 
             st.markdown("#### 📝 종합 분석 요약")

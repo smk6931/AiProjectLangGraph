@@ -18,7 +18,7 @@ st.set_page_config(page_title="AI Project", layout="wide")
 
 # 세션 상태 초기화
 if "page" not in st.session_state:
-    st.session_state.page = "dashboard"
+    st.session_state.page = "inquiry_page" # AI 매니저를 메인으로 설정
 
 # 로그인 상태 확인 및 리다이렉트 (로그인 안 된 경우)
 if "user_email" not in st.session_state:
@@ -29,19 +29,26 @@ if "user_email" not in st.session_state:
 if "user_email" in st.session_state:
     with st.sidebar:
         st.title("📌 관리 메뉴")
-        st.write(f"접속 중: {st.session_state.user_email}")
+        st.markdown("👋 환영합니다, **점주님**!")
+        
+        st.divider()
 
-        # 페이지 이름과 내부 키 매핑
+        # 페이지 이름과 내부 키 매핑 (순서 변경: AI 매니적 최상단)
         nav_options = {
-            "🏠 대시보드": "dashboard",
-            "🤖 AI 매니저": "inquiry_page", 
+            "🧠 AI 매니저 (Main)": "inquiry_page", 
+            "📊 총매출/AI 분석": "dashboard",
             "🍴 메뉴 조회": "menu_page",
-            "💬 리뷰 관리": "review_page"
+            "💬 리뷰 관리": "review_page"   
         }
 
         # 현재 페이지의 index 찾기
         current_idx = 0
         current_page = st.session_state.page
+        
+        # 값이 없는 경우(예: 외부 요인으로 페이지가 바뀐 경우) 방어
+        if current_page not in nav_options.values():
+            current_page = "inquiry_page"
+            
         for i, val in enumerate(nav_options.values()):
             if val == current_page:
                 current_idx = i
@@ -50,16 +57,17 @@ if "user_email" in st.session_state:
         selection = st.radio(
             "이동하기",
             list(nav_options.keys()),
-            index=current_idx
+            index=current_idx,
+            label_visibility="collapsed"
         )
 
         st.session_state.page = nav_options[selection]
 
-        st.divider()
-        if st.button("로그아웃"):
-            st.session_state.clear()
-            st.session_state.page = "login"
-            st.rerun()
+        # st.divider()
+        # if st.button("로그아웃"):
+        #     st.session_state.clear()
+        #     st.session_state.page = "login"
+        #     st.rerun()
 
         # --- 디버그 세션 조회 컴포넌트 추가 ---
         render_session_state_viewer()
