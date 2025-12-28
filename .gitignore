@@ -1,0 +1,25 @@
+
+# Security (절대 업로드 금지)
+.env
+.env.*
+
+# Python Environment
+venv/
+.venv/
+env/
+ENV/
+
+# Python Cache & Build
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+*.log
+error_log.txt
+
+# Editor/OS Files
+.vscode/
+.idea/
+.DS_Store
