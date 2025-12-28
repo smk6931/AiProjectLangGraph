@@ -548,6 +548,40 @@ async def answer_node_v2(state: InquiryState) -> InquiryState:
         
         # 유효성 검사
         parsed_json = json.loads(content) 
+
+        # [Architecture Pattern: Data Injection]
+        # LLM이 데이터를 복사해서 출력하면 실수(Hallucination)할 수 있습니다.
+        # 따라서 분석 텍스트만 LLM에게 맡기고, 시각화에 필요한 숫자는
+        # 신뢰할 수 있는 Python State 데이터를 직접 주입(Injection)하는 것이 안전합니다.
+        if category == "sales" and "sales_data" in state:
+            parsed_json["chart_data"] = state["sales_data"].get("recent_sales", [])
+            parsed_json["chart_setup"] = {
+                "title": "최근 매출 추이",
+                "x_key": "date",
+                "y_key_bar": "sales",
+                "y_key_line": "orders"
+            }
+            
+            # [UI UX Enhancement]
+            # 차트만 있으면 심심하니까, 상단에 '핵심 지표(Metric)'를 카드 형태로 보여주기 위해 데이터를 추가합니다.
+            # growth_rate나 total_sales를 텍스트 파싱하지 않고 바로 쓸 수 있게 계산해서 넣어줍니다.
+            summary_text = state["sales_data"].get("summary_text", "")
+            try:
+                # summary_text에서 파싱하거나, diagnosis_node에서 state에 저장해둔 raw 데이터를 쓰는 게 더 안전함
+                # 여기서는 diagnosis_node가 계산해둔 값을 활용하기 위해 state 구조를 조금 보강하는 게 좋겠지만,
+                # 간단히 recent_sales 데이터를 다시 합산해서 보냅니다.
+                recent_sales = state["sales_data"].get("recent_sales", [])
+                total_sales = sum([r['sales'] for r in recent_sales])
+                total_orders = sum([r['orders'] for r in recent_sales])
+                
+                parsed_json["key_metrics"] = {
+                    "total_sales": total_sales,
+                    "total_orders": total_orders,
+                    "period": f"최근 {len(recent_sales)}일"
+                }
+            except:
+                pass
+
         state["final_answer"] = json.dumps(parsed_json, ensure_ascii=False) # 다시 문자열로 저장 (파싱 성공 확인)
         
     except Exception as e:

@@ -14,7 +14,7 @@ async def user_insert(body : Users):
 
 async def user_select_byemail(body : UserLogin):
   row = await fetch_one("""
-    select id
+    select id, email, nickname
     from users
     where email = %s
   """,(body.email,))

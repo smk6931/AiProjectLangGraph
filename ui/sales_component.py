@@ -154,7 +154,8 @@ def show_sales_dialog(store_id, store_name):
                                 st.code(log)
 
                     st.session_state[f"last_logs_{store_id}"] = result.get("logs", [])
-                    st.rerun()
+                    # 다이얼로그가 닫히지 않도록 rerun 제거하고 로컬 변수 업데이트
+                    report_data = result.get("report") 
                 else:
                     st.error("리포트 생성에 실패했습니다.")
 

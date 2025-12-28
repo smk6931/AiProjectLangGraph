@@ -19,18 +19,16 @@ def append_logs(left: List[str], right: List[str]) -> List[str]:
 class ReportState(TypedDict):
     store_id: int
     store_name: str
-    sales_data: List[Dict[str, Any]]
+    sales_data: List[Dict[str, Any]]      # 이번주 매출 (최근 7일)
+    prev_sales_data: List[Dict[str, Any]] # 지난주 매출 (그 전 7일)
     reviews_data: List[Dict[str, Any]]
     menu_sales_data: List[Dict[str, Any]]
     day_sales_data: List[Dict[str, Any]]
-    weather_data: Dict[str, str]  # 날씨 데이터 { "2024-01-01": "맑음" }
+    weather_data: Dict[str, str]
     final_report: Dict[str, Any]
     execution_logs: Annotated[List[str], append_logs]
 
-
 async def fetch_store_data(store_id: int):
-    # This is report_autonomous.py tool, but I am editing report_graph.py nodes.
-    # report_graph.py doesn't use @tool. It uses fetch_data_node.
     pass
 
 async def fetch_data_node(state: ReportState):
@@ -44,21 +42,31 @@ async def fetch_data_node(state: ReportState):
     menu_stats = await select_menu_sales_comparison(store_id, days=7)
     day_stats = await select_sales_by_day_type(store_id, days=7)
 
-    # 날씨 데이터는 sales에 이미 포함되어 있음.
-    # sales는 ASC 정렬 (과거 -> 현재)
-    # 최근 7일치만 잘라서 사용
-    target_sales = sales[-7:] if len(sales) >= 7 else sales
-    
-    # weather_map 구성 (기존 코드 호환성 유지)
+    # [Architecture Decision]
+    # 현재 리포트는 '주간 운영 보고서(Weekly Report)'를 지향합니다.
+    # 월간 분석(1~4주차)보다는, "이번주 vs 지난주"의 변화를 감지하여 
+    # 즉각적인 운영 전략(발주, 인력 배치)을 수립하는 데 초점을 맞춥니다.
+    if len(sales) >= 14:
+        target_sales = sales[-7:]       # 이번주 (최근 7일)
+        prev_sales = sales[-14:-7]      # 지난주 (직전 7일, WoW 비교용)
+    elif len(sales) >= 7:
+        target_sales = sales[-7:]
+        prev_sales = sales[:-7]         # 데이터 부족 시 가능한 만큼만 비교
+    else:
+        target_sales = sales
+        prev_sales = []
+
+    # weather_map 구성
     weather_map = {str(s['order_date']): s.get('weather_info', '알수없음') for s in target_sales}
 
     return {
-        "sales_data": target_sales,  # 최근 7일
-        "reviews_data": reviews[:15],  # 최근 리뷰 15개
-        "menu_sales_data": menu_stats, # 메뉴별 판매 데이터
-        "day_sales_data": day_stats,   # 요일별(평일/주말) 분석 데이터
-        "weather_data": weather_map,   # 날씨 데이터 (분석 노드에서 사용)
-        "execution_logs": [log, f"✅ [Fetch] 데이터 수집 완료 (날씨 정보 포함)"]
+        "sales_data": target_sales,
+        "prev_sales_data": prev_sales,
+        "reviews_data": reviews[:15],
+        "menu_sales_data": menu_stats,
+        "day_sales_data": day_stats,
+        "weather_data": weather_map,
+        "execution_logs": [log, f"✅ [Fetch] 데이터 수집 완료 (이번주 {len(target_sales)}일, 지난주 {len(prev_sales)}일)"]
     }
 
 async def analyze_data_node(state: ReportState):
@@ -66,25 +74,24 @@ async def analyze_data_node(state: ReportState):
     log = "🧠 [Analyze] 수치 데이터 계산 및 AI 분석 시작"
     print(log)
 
-    sales = state["sales_data"]
+    sales = state["sales_data"]     # 이번주
+    prev_sales = state.get("prev_sales_data", []) # 지난주
     reviews = state["reviews_data"]
     menu_stats = state.get("menu_sales_data", [])
     day_stats = state.get("day_sales_data", [])
-    weather_map = state.get("weather_data", {})
-
-    # 수치 데이터 직접 계산 (sales는 이미 최근 7일치만 들어옴)
-    total_rev = sum(float(s['daily_revenue']) for s in sales)
-    avg_rev = total_rev / len(sales) if sales else 0
     
-    # Trend Calculation (Recent 3 vs Prev 4)
-    # sales is ASC [old ... new]
-    if len(sales) >= 7:
-        rec_val = sum(float(s['daily_revenue']) for s in sales[4:]) / 3  # Last 3
-        prev_val = sum(float(s['daily_revenue']) for s in sales[:4]) / 4 # First 4
-        trend = ((rec_val - prev_val) / prev_val * 100) if prev_val > 0 else 0
+    # 1. 주간 매출 비교 (Weekly Comparison)
+    this_week_total = sum(float(s['daily_revenue']) for s in sales)
+    prev_week_total = sum(float(s['daily_revenue']) for s in prev_sales) if prev_sales else 0
+    
+    avg_rev = this_week_total / len(sales) if sales else 0
+    
+    # 성장률 계산 (Growth Rate)
+    if prev_week_total > 0:
+        growth_rate = ((this_week_total - prev_week_total) / prev_week_total * 100)
     else:
-        trend = 0
-        
+        growth_rate = 100 if this_week_total > 0 else 0
+
     avg_rating = sum(r['rating'] for r in reviews) / len(reviews) if reviews else 0
 
     # 메뉴별 증감 분석 (매출 기준 내림차순 정렬된 상태)
@@ -136,7 +143,12 @@ async def analyze_data_node(state: ReportState):
     prompt = f"""
     프랜차이즈 경영 전문가로서 다음 데이터를 분석하고 **수치적 근거**를 바탕으로 해결책을 제시해줘.
     매장: {state['store_name']}
-    총 매출(7일): {total_rev:,.0f}원 | 일평균: {avg_rev:,.0f}원 | 추세: {trend:+.1f}% | 평점: {avg_rating:.1f}
+    
+    [주간 매출 요약]
+    - 이번주 총 매출(7일): {int(this_week_total):,}원
+    - 지난주 총 매출(7일): {int(prev_week_total):,}원
+    - 주간 성장률(WoW): {growth_rate:+.1f}%
+    - 이번주 평균 별점: {avg_rating:.1f}점
     
     상세 매출 내역 (날씨 포함): {json.dumps(source_sales, ensure_ascii=False)}
     상세 리뷰 내역: {json.dumps([{"rate": r['rating'], "txt": r['review_text']} for r in reviews], ensure_ascii=False)}
@@ -149,19 +161,19 @@ async def analyze_data_node(state: ReportState):
     평일 vs 주말 매출 변동: {json.dumps(day_analysis, ensure_ascii=False)}
 
     분석 시 다음 사항을 반드시 지켜줘:
-    1. **"무엇이, 언제, 외부에 의해 안 팔렸나?"** 다각도로 분석하세요.
+    1. **"이번주 매출이 지난주 대비 왜 변했는가?"**를 핵심 주제로 잡으세요. (성장 또는 하락의 원인 규명)
     2. **날씨와 매출의 상관관계**를 반드시 언급하세요. 
-       - "비가 왔음에도 매출이 선방했다" (긍정) 또는 "날씨가 맑았는데도 매출이 급감했다" (부정) 등.
+       - "지난주 대비 비오는 날이 많아 배달 매출이 늘었다" 등 구체적으로.
     3. 수치적 근거(Top 5 메뉴명, 주말 매출 변동률 등)를 포함하여 마크다운 표로 시각화하세요.
     
     응답은 반드시 아래 JSON 형식으로만 할 것:
     {{
         "data_evidence": {{
-            "sales_analysis": "날씨, 메뉴, 요일별 데이터를 종합한 상세 매출 분석 (마크다운 표 포함 필수)"
+            "sales_analysis": "주간 매출 비교, 날씨, 메뉴 데이터를 종합한 상세 분석 (마크다운 표 포함 필수)"
         }},
-        "summary": "종합 분석 요약 (3줄)",
-        "marketing_strategy": "외부 요인(날씨 등)을 고려한 마케팅 제안",
-        "operational_improvement": "운영 개선 제안",
+        "summary": "핵심 요약 (지난주 대비 변동 원인 포함 3줄)",
+        "marketing_strategy": "다음주 매출 증대를 위한 날씨/트렌드 기반 마케팅 제안",
+        "operational_improvement": "매장 운영 효율화 및 서비스 개선 제안",
         "risk_assessment": {{"risk_score": 80, "main_risks": [], "suggestion": ""}}
     }}
     """
@@ -176,10 +188,11 @@ async def analyze_data_node(state: ReportState):
     
     # UI용 통계 데이터 및 소스 데이터 추가
     report_dict["metrics"] = {
-        "total_rev": total_rev,
+        "total_rev": this_week_total,
         "avg_rev": avg_rev,
-        "trend_percent": trend,
-        "avg_rating": avg_rating
+        "trend_percent": growth_rate, # 트렌드 대신 성장률 사용
+        "avg_rating": avg_rating,
+        "prev_total_rev": prev_week_total # 지난주 매출 추가
     }
     report_dict["source_data"] = {
         "recent_sales": source_sales,
@@ -191,7 +204,7 @@ async def analyze_data_node(state: ReportState):
 
     return {
         "final_report": report_dict,
-        "execution_logs": [log, f"✅ [Analyze] 수치 근거 분석 완료 (추세: {trend:+.1f}%)"]
+        "execution_logs": [log, f"✅ [Analyze] 수치 근거 분석 완료 (주간 성장률: {growth_rate:+.1f}%)"]
     }
 
 async def save_report_node(state: ReportState):

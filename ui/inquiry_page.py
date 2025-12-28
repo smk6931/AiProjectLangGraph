@@ -6,103 +6,74 @@ import altair as alt
 
 API_BASE_URL = "http://localhost:8080"
 
-def display_answer(category, answer_text):
+def display_ai_message(message_content):
     """
-    카테고리와 답변 텍스트(JSON)를 받아서
-    맞춤형 UI로 렌더링하는 함수
+    AI 메시지를 렌더링하는 함수 (JSON 처리 + 시각화)
     """
     try:
-        data = json.loads(answer_text)
+        # 1. JSON 파싱 시도
+        if isinstance(message_content, str):
+            json_data = json.loads(message_content)
+        else:
+            json_data = message_content
+            
+        # 2. Key Metrics (숫자 카드) 렌더링
+        if "key_metrics" in json_data:
+            metrics = json_data["key_metrics"]
+            cols = st.columns(3)
+            with cols[0]:
+                st.metric(label="기간", value=metrics.get("period", "-"))
+            with cols[1]:
+                st.metric(label="총 매출", value=f"{int(metrics.get('total_sales', 0)):,}원")
+            with cols[2]:
+                st.metric(label="총 주문", value=f"{int(metrics.get('total_orders', 0)):,}건")
+            st.divider() # 구분선 추가
+
+        # 3. Chart Rendering (그래프)
+        if "chart_data" in json_data and json_data["chart_data"]:
+            st.caption("📊 " + json_data.get("chart_setup", {}).get("title", "데이터 시각화"))
+            
+            # DataFrame 변환
+            df = pd.DataFrame(json_data["chart_data"])
+            
+            # Altair로 복합 차트 (Bar + Line) 그리기
+            base = alt.Chart(df).encode(x=alt.X('date', axis=alt.Axis(title='날짜')))
+            
+            bar = base.mark_bar(color='#5DADE2').encode(
+                y=alt.Y('sales', axis=alt.Axis(title='매출액(원)'))
+            )
+            
+            line = base.mark_line(color='#E74C3C').encode(
+                y=alt.Y('orders', axis=alt.Axis(title='주문수(건)'))
+            )
+            
+            chart = alt.layer(bar, line).resolve_scale(y='independent')
+            st.altair_chart(chart, use_container_width=True)
+
+        # 4. 텍스트 내용 렌더링 (Summary, Detail, Action Items)
+        if "summary" in json_data:
+            st.info(f"💡 요약: {json_data['summary']}")
+        
+        if "detail" in json_data:
+            st.markdown(json_data['detail'])
+            
+        if "action_items" in json_data and json_data["action_items"]:
+            st.markdown("### 📋 제안 사항")
+            for item in json_data["action_items"]:
+                st.markdown(f"- {item}")
+                
+        # 5. Sources (혹시 몰라 추가)
+        if "sources" in json_data and json_data["sources"]:
+            st.caption("📚 참고 자료:")
+            for src in json_data["sources"]:
+                st.caption(f"- {src}")
+
     except json.JSONDecodeError:
-        st.markdown(answer_text)
-        return
-
-    # 응답 타입 확인 (없으면 기존 방식이나 카테고리로 추측)
-    res_type = data.get("type", category)
-
-    # 1. 📊 매출 관련 UI
-    if res_type == "sales" or category == "sales":
-        # 상단: 요약 멘트 & 분류 뱃지 (컬럼 분리)
-        head_col1, head_col2 = st.columns([3, 1])
-        
-        summary = data.get("summary", data.get("매출_분석", ""))
-        store_name = data.get("store_name", "") # 지점명 가져오기
-        raw_badge = category.upper()
-        
-        with head_col1:
-            if summary:
-                st.info(f"📢 {summary}")
-        with head_col2:
-             badge_text = f"📍 {store_name}\n({raw_badge})" if store_name else f"🏷️ {raw_badge}"
-             st.caption(badge_text)
-
-        # 데이터 처리
-        raw_data = data.get("data", data.get("최근_매출_데이터", []))
-        
-        if raw_data:
-            df = pd.DataFrame(raw_data)
-            
-            # 컬럼명 통일 (한글/영문 대응)
-            df.rename(columns={"날짜": "date", "매출": "sales", "주문_수": "orders"}, inplace=True)
-            
-            # 읽기 좋게 날짜 정렬
-            if "date" in df.columns:
-                df["date"] = pd.to_datetime(df["date"])
-                df = df.sort_values("date")
-            
-            # 데이터 타입 변환
-            if "sales" in df.columns: df["sales"] = pd.to_numeric(df["sales"])
-            if "orders" in df.columns: df["orders"] = pd.to_numeric(df["orders"])
-            
-            # 메트릭 표시
-            col1, col2 = st.columns(2)
-            with col1:
-                total_sales = df["sales"].sum() if "sales" in df.columns else 0
-                st.metric("기간 총 매출", f"{total_sales:,.0f}원")
-            with col2:
-                total_orders = df["orders"].sum() if "orders" in df.columns else 0
-                st.metric("기간 총 주문 수", f"{total_orders:,}건")
-
-            # 탭으로 차트와 표 분리
-            chart_tab_label = f"📈 {store_name} 매출 추이" if store_name else "📈 매출 추이"
-            tab1, tab2 = st.tabs([chart_tab_label, "📄 상세 데이터"])
-            
-            with tab1:
-                if "date" in df.columns and "sales" in df.columns:
-                    # Altair 차트: 날짜 가로 정렬 (labelAngle=0)
-                    chart = alt.Chart(df).mark_line(point=True).encode(
-                        x=alt.X('date', title='날짜', axis=alt.Axis(format='%m-%d', labelAngle=0)), 
-                        y=alt.Y('sales', title='매출(원)'),
-                        tooltip=['date', 'sales', 'orders']
-                    ).interactive()
-                    st.altair_chart(chart, use_container_width=True)
-                else:
-                    st.warning("차트를 그리기 위한 데이터가 부족합니다.")
-            
-            with tab2:
-                # 날짜를 다시 문자열로 (보기 좋게)
-                display_df = df.copy()
-                if "date" in display_df.columns:
-                    display_df["date"] = display_df["date"].dt.strftime('%Y-%m-%d')
-                st.dataframe(display_df, use_container_width=True)
-
-    # 2. 📝 일반 답변 (매뉴얼/규정)
-    else:
-        # 상단: 제목 & 분류 뱃지
-        title = data.get("title", "")
-        head_col1, head_col2 = st.columns([3, 1])
-        
-        with head_col1:
-            if title:
-                st.subheader(f"📌 {title}")
-        with head_col2:
-            st.caption(f"🏷️ 분류: {category.upper()}")
-
-        content = data.get("content", data.get("answer", ""))
-        
-        # Markdown 렌더링
-        clean_content = str(content).replace("\\n", "\n")
-        st.markdown(clean_content)
+        # JSON이 아니면 그냥 텍스트로 출력 (Fallback)
+        st.markdown(message_content)
+    except Exception as e:
+        st.error(f"렌더링 오류: {e}")
+        st.markdown(message_content)
 
 
 def inquiry_page():
@@ -137,58 +108,7 @@ def inquiry_page():
             # (2) 최종 AI 답변 출력
             # (2) 최종 AI 답변 출력
             if msg["content"]:
-                try:
-                    import json
-                    # JSON 파싱 시도
-                    data = json.loads(msg["content"])
-                    
-                    # 1. 요약 (Highlight)
-                    if data.get("summary"):
-                        st.info(f"**요약**: {data['summary']}", icon="💡")
-                    
-                    # 2. 상세 내용
-                    if data.get("detail"):
-                        st.markdown(data["detail"])
-                        
-                    # 3. Action Items (체크리스트 스타일)
-                    if data.get("action_items") and isinstance(data["action_items"], list):
-                        st.divider()
-                        st.subheader("✅ 제안하는 조치사항")
-                        for item in data["action_items"]:
-                            st.markdown(f"- {item}")
-                            
-                    # 4. 출처
-                    if data.get("sources") and isinstance(data["sources"], list):
-                        st.caption("📚 참고 자료:")
-                        for src in data["sources"]:
-                            st.caption(f"- {src}")
-
-                    # 5. 데이터 시각화 (그래프)
-                    if data.get("type") == "sales" and data.get("data"):
-                        st.markdown("---")
-                        st.subheader("📊 매출 트렌드")
-                        try:
-                            import pandas as pd
-                            df = pd.DataFrame(data["data"])
-                            # 컬럼명 유연하게 찾기 (date, sales 포함된 컬럼)
-                            date_col = next((c for c in df.columns if 'date' in c), None)
-                            sales_col = next((c for c in df.columns if 'sales' in c), None)
-                            
-                            if date_col and sales_col:
-                                df[date_col] = pd.to_datetime(df[date_col])
-                                # 차트 그리기
-                                st.line_chart(df.set_index(date_col)[sales_col])
-                            else:
-                                st.dataframe(df)
-                        except Exception as e:
-                            st.caption(f"데이터 시각화 오류: {e}")
-
-                except (json.JSONDecodeError, TypeError):
-                    # JSON 형식이 아니거나 파싱 실패 시 기존 방식(일반 텍스트) 사용
-                    if msg["role"] == "assistant" and msg.get("category") != "system":
-                         display_answer(msg.get("raw_category", "general"), msg["content"])
-                    else:
-                         st.markdown(msg["content"])
+                display_ai_message(msg["content"])
 
     # 2. 사용자 입력 처리
     if prompt := st.chat_input("질문을 입력하세요..."):
@@ -362,51 +282,8 @@ def inquiry_page():
                     if "answer" in final_result:
                         answer = final_result["answer"]
                         # Structured UI 렌더링 (스트리밍 완료 후)
-                        try:
-                            import json
-                            data = json.loads(answer)
-                            
-                            # 1. 요약
-                            if data.get("summary"):
-                                st.info(f"**요약**: {data['summary']}", icon="💡")
-                            
-                            # 2. 상세 내용
-                            if data.get("detail"):
-                                st.markdown(data["detail"])
-                                
-                            # 3. Action Items
-                            if data.get("action_items") and isinstance(data["action_items"], list):
-                                st.divider()
-                                st.subheader("✅ 제안하는 조치사항")
-                                for item in data["action_items"]:
-                                    st.markdown(f"- {item}")
-                                    
-                            # 4. 출처
-                            if data.get("sources") and isinstance(data["sources"], list):
-                                st.caption("📚 참고 자료:")
-                                for src in data["sources"]:
-                                    st.caption(f"- {src}")
-
-                            # 5. 차트
-                            if data.get("type") == "sales" and data.get("data"):
-                                st.markdown("---")
-                                st.subheader("📊 매출 트렌드")
-                                try:
-                                    import pandas as pd
-                                    df = pd.DataFrame(data["data"])
-                                    date_col = next((c for c in df.columns if 'date' in c), None)
-                                    sales_col = next((c for c in df.columns if 'sales' in c), None)
-                                    if date_col and sales_col:
-                                        df[date_col] = pd.to_datetime(df[date_col])
-                                        st.line_chart(df.set_index(date_col)[sales_col])
-                                    else:
-                                        st.dataframe(df)
-                                except Exception as e:
-                                    st.caption(f"데이터 시각화 오류: {e}")
-
-                        except:
-                            # 실패 시 기존 함수 사용
-                            display_answer(category, answer)
+                        # Structured UI 렌더링 (스트리밍 완료 후)
+                        display_ai_message(answer)
                         
                         # 세션에 메시지 저장 (로그 포함)
                         st.session_state.messages.append({
