@@ -1,85 +1,148 @@
-# AWS Server Management Guide (feat. Tmux)
+# AWS EC2 & RDS 배포/운영 가이드 (Total Guide)
 
-이 문서는 AWS EC2 서버에서 **SSH 접속을 종료해도 애플리케이션이 계속 실행되도록 유지**하기 위한 `tmux` 사용법을 정리합니다.
-
-## 1. Why Tmux? (왜 Tmux를 쓰는가?)
-
-SSH로 서버에 접속해서 프로그램을 실행하면, 기본적으로 **터미널 세션이 끊기는 순간 실행 중인 프로그램도 함께 종료**됩니다.
-이를 방지하기 위해 **"서버 안에 가상의 모니터(세션)"**를 만들어두고, 우리는 그 모니터만 껐다 켰다 하는 방식을 사용합니다. 이게 바로 **Tmux**입니다.
-
-- **Persistence (지속성)**: 내가 접속을 끊어도 Tmux 세션 안의 프로그램은 영원히 돌아갑니다.
-- **Multitasking**: 하나의 SSH 창에서 여러 개의 터미널 화면을 분할해서 쓸 수 있습니다.
+이 문서는 로컬 개발 환경과 AWS 서버 환경의 차이를 이해하고, `tmux`를 사용하여 서버 프로세스를 관리하며, RDS와 연동하는 모든 과정을 정리한 통합 가이드입니다.
 
 ---
 
-## 2. Tmux 설치 & 실행 (Workflow)
+## 1. 🏗️ 아키텍처 이해 (가장 중요!)
 
-### Step 1. 설치 (최초 1회)
-우분투 서버에 접속한 상태에서 설치합니다.
+우리는 **하나의 코드베이스**를 사용하지만, **실행 환경(Local vs Server)**에 따라 DB에 접속하는 방식이 다릅니다.
 
-```bash
-sudo apt-get update
-sudo apt-get install tmux -y
+| 구분 | 로컬(Local) 환경 | AWS 서버(Server) 환경 |
+| :--- | :--- | :--- |
+| **위치** | 내 컴퓨터 (Windows) | AWS EC2 (Ubuntu) |
+| **DB 접속 방식** | **SSH 터널링** (우회 접속) | **Direct Connection** (직통) |
+| **Host 설정** | `localhost` | `database-aws.cpusiq4esjqv...` |
+| **Port 설정** | `5433` (터널링 포트) | `5432` (기본 포트) |
+| **실행 도구** | VS Code 터미널 | `tmux` (가상 터미널) |
+
+---
+
+## 2. ⚙️ 환경변수 (.env) 설정 차이
+
+**보안상 `.env` 파일은 절대 Git에 올리지 않습니다.** 각 환경에서 직접 생성/수정해야 합니다.
+
+### 🏠 2-1. 로컬(Local) `.env`
+로컬은 SSH 터널을 통해 접속하므로 `localhost`와 터널 포트(`5433`)를 사용합니다.
+
+```ini
+# SSH Tunneling Connection
+DB_HOST=localhost
+DB_PORT=5433
+DB_USER=postgres
+DB_PASSWORD=chlrkd1234
+DB_NAME=ai_project
+
+# API Keys
+GEMINI_API_KEY=AIzaSy...
 ```
 
-### Step 2. 새로운 세션 만들기 (Start)
-프로젝트를 실행할 '방(Session)'을 하나 만듭니다. 이름은 `portfolio`로 지정합니다.
+### ☁️ 2-2. 서버(Server) `.env`
+서버는 RDS와 같은 네트워크(혹은 허용된 네트워크)에 있으므로 실제 주소를 사용합니다.
+*   **수정 방법**: 서버 접속 후 `nano .env` 명령어로 수정.
 
-```bash
-# 'portfolio'라는 이름의 새로운 세션 시작
-tmux new -s portfolio
+```ini
+# Direct Connection
+DB_HOST=database-aws.cpusiq4esjqv.ap-northeast-2.rds.amazonaws.com
+DB_PORT=5432  <-- (주의: 5432 정석 포트 사용)
+DB_USER=postgres
+DB_PASSWORD=chlrkd1234
+DB_NAME=ai_project <-- (주의: postgres 아님)
+
+# API Keys
+GEMINI_API_KEY=AIzaSy...
 ```
-> *명령어를 입력하면 화면 하단에 녹색 띠(상태 바)가 생깁니다. 이제 가상 세션 안에 들어온 것입니다.*
 
-### Step 3. 애플리케이션 실행
-가상 세션 안에서 평소처럼 서버를 실행합니다.
+---
 
+## 3. 🖥️ 서버 프로세스 관리 (Tmux 완벽 가이드)
+
+서버 연결(`ssh`)을 끊어도 프로그램(백엔드/프론트엔드)이 **24시간 계속 돌아가게 하기 위해** `tmux`를 사용합니다.
+
+### ⚡ Tmux 단축키 요약 (Quick Cheat Sheet)
+
+| 동작 | 명령어 / 단축키 | 설명 |
+| :--- | :--- | :--- |
+| **세션 목록 보기** | `tmux ls` | 현재 실행 중인 모든 세션 확인 |
+| **세션 접속하기** | `tmux attach -t portfolio` | 'portfolio' 세션 화면으로 들어가기 |
+| **세션 만들기** | `tmux new -s portfolio` | 'portfolio'라는 이름으로 새 방 만들기 |
+| **화면 나누기(상하)** | `Ctrl`+`b` 누르고 `"` | 화면을 위/아래로 쪼개기 (백엔드/프론트엔드 동시 실행용) |
+| **화면 나누기(좌우)** | `Ctrl`+`b` 누르고 `%` | 화면을 왼쪽/오른쪽으로 쪼개기 |
+| **포커스 이동** | `Ctrl`+`b` 누르고 `방향키` | 나눠진 화면 간 이동하기 |
+| **스크롤 올리기** | `Ctrl`+`b` 누르고 `[` | 지난 로그 확인 (나갈 땐 `q`) |
+| **나가기 (Detach)** | `Ctrl`+`b` 누르고 `d` | **서버를 끄지 않고** 내 컴퓨터로 빠져나오기 |
+| **창 닫기** | `exit` 또는 `Ctrl`+`d` | 해당 터미널 창을 완전히 종료 (주의!) |
+
+### 3-1. 실전 사용법 (화면 쪼개서 돌리기)
+하나의 창에서 두 개의 서버를 동시에 돌리는 방법입니다.
+
+1.  **접속**: `tmux attach -t portfolio`
+2.  **화면 분할**: `Ctrl` + `b` `"` (상하 분할)
+3.  **위쪽 창 (Frontend)**:
+    ```bash
+    streamlit run ui/main_ui.py
+    ```
+4.  **아래쪽 창 (Backend)**: (이동: `Ctrl`+`b` `↓`)
+    ```bash
+    python -m uvicorn main:app --host 0.0.0.0 --port 8080
+    ```
+5.  **나오기**: `Ctrl` + `b` `d`
+
+---
+
+## 4. 🚀 배포 워크플로우 (Local -> Server)
+
+코드를 수정했을 때 서버에 반영하는 순서입니다.
+
+### 1단계: 로컬(Local)에서 작업
+```powershell
+# 1. 코드 수정 완료
+# 2. Git에 올리기
+git add .
+git commit -m "기능 추가 및 버그 수정"
+git push origin feat/migrate-to-rds (또는 main)
+```
+
+### 2단계: 서버(Server)에 반영
 ```bash
+# 1. 서버 접속
+ssh -i "key.pem" ubuntu@...
+
+# 2. 프로젝트 폴더로 이동
 cd AiProjectLangGraph
+
+# 3. 최신 코드 받기
+git pull origin feat/migrate-to-rds (또는 main)
+
+# 4. (필요 시) 패키지 설치
 source venv/bin/activate
-streamlit run ui/dashboard.py --server.port 8501 --server.address 0.0.0.0
-```
+pip install -r requirements.txt
 
-### Step 4. 방 나가기 (Detach) - **중요!**
-서버가 돌아가는 상태에서 **프로그램을 끄지 않고** 몸만 빠져나옵니다.
-
-1. **`Ctrl`** + **`b`** 를 누른다. (손을 뗀다)
-2. **`d`** 를 누른다.
-
-> *`[detached (from session portfolio)]` 라는 메시지가 뜨며 원래 터미널로 돌아오면 성공입니다.*
-> *이제 SSH 접속을 종료해도 서버는 계속 돌아갑니다.*
-
----
-
-## 3. 다시 접속하기 & 관리 (Maintenance)
-
-나중에 로그를 확인하거나 서버를 재시작해야 할 때 사용합니다.
-
-### 실행 중인 세션 목록 확인
-```bash
-tmux ls
-```
-
-### 세션으로 다시 들어가기 (Re-attach)
-```bash
-# 'portfolio' 세션으로 복귀
+# 5. 서버 재시작 (Tmux 내부)
 tmux attach -t portfolio
-```
-
-### 세션 아예 삭제하기 (Kill)
-서버를 완전히 끄거나 세션을 없애고 싶을 때 사용합니다.
-```bash
-# 'portfolio' 세션 강제 종료
-tmux kill-session -t portfolio
+# -> 각 창에서 Ctrl+C 로 끄고 다시 실행 명령어(화살표 윗키) 입력
 ```
 
 ---
 
-## 4. Tmux 단축키 모음 (Cheat Sheet)
-모든 단축키는 **`Ctrl` + `b`** 를 먼저 누르고(Prefix), 손을 뗀 뒤 다음 키를 누릅니다.
+## 5. 🛠️ 트러블슈팅 (자주 겪은 에러)
 
-- `Ctrl + b`, `d`: 세션 분리하기 (Detach - 밖으로 나가기)
-- `Ctrl + b`, `%`: 화면 세로 분할
-- `Ctrl + b`, `"`: 화면 가로 분할
-- `Ctrl + b`, `방향키`: 분할된 화면 간 이동
-- `Ctrl + b`, `x`: 현재 패널(창) 닫기
+### Q1. `Connection refused` (111 error)
+*   **원인**: 서버 코드가 RDS 주소가 아닌 `localhost`로 접속을 시도함.
+*   **해결**: 
+    1. 서버 `.env` 파일의 `DB_HOST`가 RDS 주소인지 확인. (`nano .env`)
+    2. `app/core/db.py` 코드가 최신인지 확인 (`git pull` 안 했을 가능성).
+
+### Q2. `FATAL: password authentication failed`
+*   **원인**: `.env` 파일에 비밀번호 뒤에 **공백(Space)**이 숨어있음.
+*   **해결**: `.env` 내용을 지우고 아주 깔끔하게 다시 타이핑.
+
+### Q3. `relation "xxx" does not exist`
+*   **원인**: DB 이름이 틀림 (`postgres` vs `ai_project`) 또는 마이그레이션을 안 함.
+*   **해결**: 
+    1. `.env`의 `DB_NAME=ai_project` 확인.
+    2. `alembic upgrade head` 명령어로 테이블 생성.
+
+### Q4. `Missing api_key`
+*   **원인**: 서버 `.env`에 `GEMINI_API_KEY` 환경변수가 없음.
+*   **해결**: `nano .env`로 키 추가.
