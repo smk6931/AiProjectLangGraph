@@ -109,6 +109,18 @@ streamlit run ui/main_ui.py
 
 ---
 
+## AWS RDS 연결
+ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -N -L 5433:database-aws.cpusiq4esjqv.ap-northeast-2.rds.amazonaws.com:5432 ubuntu@15.164.230.250 -o ServerAliveInterval=60
+
+python -m uvicorn main:app --reload --port 8080
+streamlit run /ui/dashboard.py
+
+./venv/scripts/activate
+source venv/bin/activate
+
+
+AWS_EC2 = ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" ubuntu@15.164.230.250
+
 ## 💡 Trouble Shooting & Insights
 
 ### Q. LangGraph를 왜 사용했나요?

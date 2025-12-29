@@ -1,9 +1,0 @@
-Traceback (most recent call last):
-  File "C:\GitHub\AiProjectLangGraph\seed_policies.py", line 7, in <module>
-    from app.policy.policy_schema import Policy
-  File "C:\GitHub\AiProjectLangGraph\app\policy\policy_schema.py", line 7, in <module>
-    from app.core.db import base
-  File "C:\GitHub\AiProjectLangGraph\app\core\db.py", line 37, in <module>
-    from app.policy.policy_schema import Policy  # noqa: F401
-    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-ImportError: cannot import name 'Policy' from partially initialized module 'app.policy.policy_schema' (most likely due to a circular import) (C:\GitHub\AiProjectLangGraph\app\policy\policy_schema.py)
