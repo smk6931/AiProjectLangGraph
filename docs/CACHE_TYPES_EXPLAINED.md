@@ -258,3 +258,4 @@ localStorage.setItem("report", JSON.stringify(data))  // 사용자 컴퓨터에 
 2. Redis (로컬) ⚡⚡
 3. PostgreSQL ⚡
 
+
