@@ -1,18 +1,19 @@
 
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
-
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
-
 pool: AsyncConnectionPool
-
 import os
 from dotenv import load_dotenv
-
 load_dotenv()
+# Local DB 이건 안됨
+# database_url = os.getenv("DATABASE_URL", "postgresql://ai_user:1234@localhost:5432/ai_project")
 
-database_url = os.getenv("DATABASE_URL", "postgresql://ai_user:1234@localhost:5432/ai_project")
+# Local DB 이건 됨
+# database_url = "postgresql://ai_user:1234@localhost:5432/ai_project"
+
+database_url = f"postgresql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT', '5432')}/{os.getenv('DB_NAME')}"
 
 # SQLAlchemy는 "postgresql://"만 주면 기본적으로 psycopg2를 찾으므로,
 # 설치된 psycopg(v3)를 사용하도록 스키마를 명시해줍니다.
