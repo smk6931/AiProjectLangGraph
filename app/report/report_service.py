@@ -11,26 +11,28 @@ from app.core.cache import get_report_cache, set_report_cache, get_report_object
 from app.report.report_graph import create_report_graph
 
 
-async def generate_ai_store_report(store_id: int, store_name: str, mode: str = "sequential"):
+async def generate_ai_store_report(store_id: int, store_name: str, mode: str = "sequential", target_date: str = None):
     """
     LangGraph 프로세스 실행 (Sequential Graph)
     캐시 확인 → 없으면 생성 → 캐시 저장
     """
     try:
-        print(f"🚀 [Service] '{store_name}' 리포트 생성 시작...")
+        print(f"🚀 [Service] '{store_name}' 리포트 생성 시작 ({target_date if target_date else 'Today'})...")
 
         today = date.today()
 
-        # 1. 캐시 확인
-        # cached_report = await get_report_cache(store_id, today)
-        # if cached_report:
-        #     cached_report["mode"] = mode
-        #     return cached_report
+        # 1. 캐시 확인 (target_date가 없을 때만)
+        # if not target_date:
+        #     cached_report = await get_report_cache(store_id, today)
+        #     if cached_report:
+        #         cached_report["mode"] = mode
+        #         return cached_report
 
-        # 2. 캐시 없으면 리포트 생성
+        # 2. 리포트 생성
         initial_state = {
             "store_id": store_id,
             "store_name": store_name,
+            "target_date": target_date, # [NEW] 분석 대상 날짜
             "messages": [],
             "execution_logs": []
         }

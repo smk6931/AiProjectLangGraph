@@ -19,6 +19,7 @@ def append_logs(left: List[str], right: List[str]) -> List[str]:
 class ReportState(TypedDict):
     store_id: int
     store_name: str
+    target_date: str # [Optional] 분석 기준 날짜 (YYYY-MM-DD)
     sales_data: List[Dict[str, Any]]      # 이번주 매출 (최근 7일)
     prev_sales_data: List[Dict[str, Any]] # 지난주 매출 (그 전 7일)
     reviews_data: List[Dict[str, Any]]
@@ -37,24 +38,59 @@ async def fetch_data_node(state: ReportState):
     log = f"📊 [Fetch] '{state['store_name']}' 데이터 수집 시작"
     print(log)
 
-    sales = await select_daily_sales_by_store(store_id)
-    reviews = await select_reviews_by_store(store_id)
-    menu_stats = await select_menu_sales_comparison(store_id, days=7)
-    day_stats = await select_sales_by_day_type(store_id, days=7)
+    # 1. 기준 날짜(Anchor Date) 결정
+    # 시연 모드 or 과거 날짜 조회 지원
+    from app.core.db import fetch_all
+    from datetime import datetime, timedelta
+    
+    target_date_str = state.get("target_date")
+    
+    if not target_date_str:
+        # 타겟 날짜가 없으면 DB 최신 날짜 조회 (Simulation Mode)
+        max_date_query = f"SELECT MAX(sale_date) as last_date FROM sales_daily WHERE store_id = {store_id}"
+        try:
+            max_date_rows = await fetch_all(max_date_query)
+            if max_date_rows and max_date_rows[0]['last_date']:
+                target_date_str = str(max_date_rows[0]['last_date'])
+                log += f"\n🕒 최신 데이터 날짜 기준: {target_date_str}"
+            else:
+                target_date_str = str(date.today())
+        except:
+            target_date_str = str(date.today())
 
-    # [Architecture Decision]
-    # 현재 리포트는 '주간 운영 보고서(Weekly Report)'를 지향합니다.
-    # 월간 분석(1~4주차)보다는, "이번주 vs 지난주"의 변화를 감지하여 
-    # 즉각적인 운영 전략(발주, 인력 배치)을 수립하는 데 초점을 맞춥니다.
-    if len(sales) >= 14:
-        target_sales = sales[-7:]       # 이번주 (최근 7일)
-        prev_sales = sales[-14:-7]      # 지난주 (직전 7일, WoW 비교용)
-    elif len(sales) >= 7:
-        target_sales = sales[-7:]
-        prev_sales = sales[:-7]         # 데이터 부족 시 가능한 만큼만 비교
-    else:
-        target_sales = sales
-        prev_sales = []
+    ref_date = datetime.strptime(target_date_str, "%Y-%m-%d").date()
+    
+    # 2. 데이터 조회
+    # 메뉴별, 요일별 통계는 기준 날짜를 넘겨서 DB에서 정확히 계산
+    menu_stats = await select_menu_sales_comparison(store_id, days=7, target_date=target_date_str)
+    day_stats = await select_sales_by_day_type(store_id, days=7, target_date=target_date_str)
+    reviews = await select_reviews_by_store(store_id) # 리뷰는 전체 가져와서 최신순 (TODO: 날짜 필터링?)
+
+    # 일별 매출은 전체를 가져온 뒤 파이썬에서 날짜 필터링 (DB 호출 횟수 절약)
+    all_sales = await select_daily_sales_by_store(store_id)
+    
+    # 3. 날짜 필터링 (이번주 vs 지난주)
+    # 이번주: ref_date 포함 최근 7일 (ref_date - 6 ~ ref_date)
+    # 지난주: 그 전 7일 (ref_date - 13 ~ ref_date - 7)
+    
+    curr_start = ref_date - timedelta(days=6)
+    curr_end = ref_date
+    prev_start = ref_date - timedelta(days=13)
+    prev_end = ref_date - timedelta(days=7)
+    
+    target_sales = []
+    prev_sales = []
+    
+    for s in all_sales:
+        s_date = s['order_date'] # date object
+        if curr_start <= s_date <= curr_end:
+            target_sales.append(s)
+        elif prev_start <= s_date <= prev_end:
+            prev_sales.append(s)
+            
+    # 정렬 (날짜 오름차순) -> 그래프용
+    target_sales.sort(key=lambda x: x['order_date'])
+    prev_sales.sort(key=lambda x: x['order_date'])
 
     # weather_map 구성
     weather_map = {str(s['order_date']): s.get('weather_info', '알수없음') for s in target_sales}
@@ -62,11 +98,12 @@ async def fetch_data_node(state: ReportState):
     return {
         "sales_data": target_sales,
         "prev_sales_data": prev_sales,
-        "reviews_data": reviews[:15],
+        "reviews_data": reviews[:15], # 최신 15개만 사용
         "menu_sales_data": menu_stats,
         "day_sales_data": day_stats,
         "weather_data": weather_map,
-        "execution_logs": [log, f"✅ [Fetch] 데이터 수집 완료 (이번주 {len(target_sales)}일, 지난주 {len(prev_sales)}일)"]
+        "target_date": target_date_str, # State 업데이트
+        "execution_logs": [log, f"✅ [Fetch] 데이터 수집 완료 (기준일: {target_date_str}, 이번주 {len(target_sales)}일, 지난주 {len(prev_sales)}일)"]
     }
 
 async def analyze_data_node(state: ReportState):

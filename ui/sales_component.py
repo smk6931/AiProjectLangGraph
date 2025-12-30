@@ -124,37 +124,75 @@ def show_sales_dialog(store_id, store_name):
         st.write("### 🤖 AI 지점 경영 전략 리포트")
         st.write("지점의 매출과 고객 리뷰를 분석하여 AI 컨설턴트가 최적의 운영 전략을 제안합니다.")
 
-        # 최신 리포트 불러오기
+        # 주차별 분석을 위한 날짜 옵션 생성
+        # sales_data는 tab1에서 이미 로드됨 (get_api)
+        report_target_date = None
+        
+        if 'df_sales' in locals() and not df_sales.empty:
+            max_d = df_sales['order_date'].max() # date object
+            min_d = df_sales['order_date'].min()
+            
+            # 7일 단위로 날짜 끊어서 리스트 생성
+            week_options = {}
+            curr = max_d
+            from datetime import timedelta
+            
+            idx = 1
+            while curr >= min_d:
+                start_w = curr - timedelta(days=6)
+                label = f"{curr.strftime('%Y년 %m월 %d일')} 기준 주차 ({start_w.strftime('%m.%d')} ~ {curr.strftime('%m.%d')})"
+                week_options[label] = str(curr)
+                curr -= timedelta(days=7)
+                idx += 1
+                if idx > 10: break # 최근 10주까지만 표시
+            
+            # UI: 주차 선택 박스
+            st.markdown("##### 📅 분석 기간 선택")
+            selected_label = st.selectbox(
+                "분석할 주차를 선택하세요", 
+                options=list(week_options.keys()),
+                key=f"report_week_select_{store_id}",
+                label_visibility="collapsed"
+            )
+            report_target_date = week_options[selected_label]
+            
+        # 최신 리포트 불러오기 (혹은 선택된 날짜의 리포트 조회가 필요하다면 API 수정 필요하지만, 일단 최신 조회 유지)
+        # TODO: 리포트 조회 API도 target_date를 받으면 좋음. 지금은 생성만 target_date 지원.
         report_data = get_api(f"/report/latest/{store_id}")
 
         col_btn1, col_btn2 = st.columns([1, 2])
-        if col_btn1.button("✨ 새 리포트 생성", key=f"gen_report_{store_id}"):
-            with st.spinner("AI가 데이터를 분석하여 리포트를 생성 중입니다..."):
+        if col_btn1.button("✨ 선택 기간 리포트 생성", key=f"gen_report_{store_id}"):
+            with st.spinner(f"AI가 {report_target_date} 기준 데이터를 분석 중입니다..."):
                 import requests
                 from api_utils import API_BASE_URL
-                params = {"store_name": store_name, "mode": "sequential"}
+                
+                params = {
+                    "store_name": store_name, 
+                    "mode": "sequential",
+                    "target_date": report_target_date # [NEW] 선택된 날짜 전달
+                }
+                
                 resp = requests.post(
                     f"{API_BASE_URL}/report/generate/{store_id}", params=params)
 
                 if resp.status_code == 200:
                     result = resp.json()
                     
-                    # 캐시 여부에 따른 메시지 차이화
+                    # 캐시/생성 성공 메시지
                     if result.get("cached"):
-                        st.info("⚡ 오늘 이미 생성된 리포트가 있어 캐시(Memory)에서 즉시 불러왔습니다.")
-                        st.toast("캐시 데이터 로드 완료!", icon="⚡")
+                        st.info("⚡ 이전에 생성된 리포트가 있어 즉시 불러왔습니다.")
                     else:
-                        st.success("새로운 리포트가 생성되었습니다!")
+                        st.success(f"{report_target_date} 기준 리포트가 생성되었습니다!")
                         st.toast("AI 리포트 생성 완료!", icon="✨")
 
                     # 실행 로그 보여주기
                     if "logs" in result and result["logs"]:
-                        with st.expander("📜 AI 실행 로그 확인", expanded=not result.get("cached")):
+                        with st.expander("📜 AI 실행 로그 확인", expanded=True):
                             for log in result["logs"]:
                                 st.code(log)
 
                     st.session_state[f"last_logs_{store_id}"] = result.get("logs", [])
-                    # 다이얼로그가 닫히지 않도록 rerun 제거하고 로컬 변수 업데이트
+                    # 바로 보여주기 위해 변수 업데이트
                     report_data = result.get("report") 
                 else:
                     st.error("리포트 생성에 실패했습니다.")
