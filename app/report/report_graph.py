@@ -178,13 +178,32 @@ async def analyze_data_node(state: ReportState):
     }}
     """
 
-    report_json = await genai_generate_text(prompt)
-    if "```json" in report_json:
-        report_json = report_json.split("```json")[1].split("```")[0].strip()
-    elif "```" in report_json:
-        report_json = report_json.split("```")[1].split("```")[0].strip()
-
-    report_dict = json.loads(report_json)
+    raw_text = await genai_generate_text(prompt)
+    
+    # 1. 마크다운 코드블록 제거
+    if "```json" in raw_text:
+        raw_text = raw_text.split("```json")[1].split("```")[0].strip()
+    elif "```" in raw_text:
+        raw_text = raw_text.split("```")[1].split("```")[0].strip()
+        
+    # 2. 제어 문자(Control Characters) 제거 (JSON 파싱 에러 방지)
+    import re
+    cleaned_json = re.sub(r'[\x00-\x1F\x7F]', '', raw_text)
+    
+    try:
+        # strict=False 옵션으로 유연하게 파싱
+        report_dict = json.loads(cleaned_json, strict=False)
+    except json.JSONDecodeError as e:
+        print(f"❌ [Analyze] JSON 파싱 실패: {e}")
+        print(f"   (Raw Text): {raw_text[:200]}...") # 디버깅용 로그
+        # Fallback: 기본 빈 템플릿 반환
+        report_dict = {
+            "data_evidence": {"sales_analysis": "데이터 분석 실패"},
+            "summary": "리포트 생성 중 오류가 발생했습니다.",
+            "marketing_strategy": "",
+            "operational_improvement": "",
+            "risk_assessment": {"risk_score": 0, "main_risks": [], "suggestion": ""}
+        }
     
     # UI용 통계 데이터 및 소스 데이터 추가
     report_dict["metrics"] = {

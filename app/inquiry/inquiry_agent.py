@@ -175,23 +175,51 @@ async def diagnosis_node(state: InquiryState) -> InquiryState:
             
     # ---------------------------------------------------------
     
-    # 날짜 계산 (비교 분석을 위해 2배 기간 조회)
+    # ---------------------------------------------------------
+    # [Simulation Mode] 데이터 기준일(Anchor Date) 설정
+    # 시연을 위해 실제 오늘 날짜(datetime.now)가 아닌, DB의 최신 데이터 날짜를 기준으로 분석합니다.
+    # ---------------------------------------------------------
+    
+    # 1. DB에서 가장 최근 데이터 날짜 조회
+    max_date_query = f"SELECT MAX(sale_date) as last_date FROM sales_daily WHERE store_id = {target_store_id}"
+    try:
+        max_date_rows = await fetch_all(max_date_query)
+        if max_date_rows and max_date_rows[0]['last_date']:
+            ref_date_str = str(max_date_rows[0]['last_date']) # "2025-12-24"
+            print(f"🕒 [Simulation Time] DB 최신 데이터 기준일 설정: {ref_date_str}")
+        else:
+            ref_date_str = "2025-12-24" # Fallback
+            print(f"⚠️ [Simulation Time] 데이터 없음 -> 기본값 설정: {ref_date_str}")
+    except Exception as e:
+        print(f"⚠️ [Simulation Time] 날짜 조회 실패({e}) -> 기본값 설정")
+        ref_date_str = "2025-12-24"
+
+    # 2. 날짜 계산 (기준일로부터 역산)
     try:
         days = int(days)
     except:
         days = 7
         
-    end_date = datetime.now()
-    start_date = (end_date - timedelta(days=days)).strftime("%Y-%m-%d")
-    prev_start_date = (end_date - timedelta(days=days*2)).strftime("%Y-%m-%d")
+    ref_date = datetime.strptime(ref_date_str, "%Y-%m-%d")
+    
+    # (Q. '이번 주' 분석을 원하면 월~일 단위로 끊을 수도 있지만, 일단 최근 N일 기준으로 수행)
+    end_date = ref_date
+    start_date = (end_date - timedelta(days=days-1)).strftime("%Y-%m-%d") # 오늘 포함 7일이면 -6이어야 함
+    prev_end_date = (end_date - timedelta(days=days))
+    prev_start_date = (prev_end_date - timedelta(days=days-1)).strftime("%Y-%m-%d")
+    
+    # 쿼리용 문자열 변환
+    end_date_str = end_date.strftime("%Y-%m-%d")
+    prev_end_date_str = prev_end_date.strftime("%Y-%m-%d")
 
-    # 2. 매출 & 날씨 데이터 조회 (현재 기간 vs 직전 기간)
-    # 직전 기간까지 포함해서 넉넉하게 조회
+    # 3. 매출 & 날씨 데이터 조회 (기준 기간 vs 직전 기간)
+    # 한 번에 2배수 기간을 긁어와서 Python에서 나누는 방식 유지
     sales_query = f"""
         SELECT sale_date, total_sales, total_orders, weather_info 
         FROM sales_daily 
         WHERE store_id = {target_store_id} 
           AND sale_date >= '{prev_start_date}'
+          AND sale_date <= '{end_date_str}'
         ORDER BY sale_date DESC
     """
     sales_rows = await fetch_all(sales_query)
@@ -199,6 +227,8 @@ async def diagnosis_node(state: InquiryState) -> InquiryState:
     # 데이터 분리 (이번 기간 vs 지난 기간)
     current_period = []
     prev_period = []
+    
+    threshold_date = datetime.strptime(start_date, "%Y-%m-%d").date()
     
     import pandas as pd
     threshold_date = pd.to_datetime(start_date).date()

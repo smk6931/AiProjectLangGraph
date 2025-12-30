@@ -132,3 +132,6 @@ AWS_EC2 = ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_
 ### Q. 날씨 데이터는 어떻게 분석에 활용되나요?
 매일 생성되는 매출 데이터(`sales_daily`)에는 당시의 날씨 정보가 함께 태깅됩니다. 리포트 생성 에이전트는 *"지난주 대비 매출 하락"*이라는 Fact와 *"지난주 내내 비가 옴"*이라는 Context를 결합하여 **"우천으로 인한 내점 고객 감소"**라는 인사이트를 도출합니다.
 
+
+## 추후에 도전할것
+FireCrawl사용 크롤링??
