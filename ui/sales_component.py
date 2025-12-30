@@ -197,6 +197,20 @@ def show_sales_dialog(store_id, store_name):
                 else:
                     st.error("리포트 생성에 실패했습니다.")
 
+        # [NEW] 리포트 초기화 버튼
+        if col_btn2.button("🗑️ 리포트 초기화", key=f"reset_report_{store_id}"):
+            import requests
+            from api_utils import API_BASE_URL
+            try:
+                resp = requests.delete(f"{API_BASE_URL}/report/reset/{store_id}")
+                if resp.status_code == 200:
+                    st.toast("리포트 데이터가 초기화되었습니다.", icon="🗑️")
+                    st.rerun() # 새로고침해서 초기화된 상태 반영
+                else:
+                    st.error("초기화 실패")
+            except Exception as e:
+                st.error(f"Error: {e}")
+
         if report_data:
             st.divider()
             
