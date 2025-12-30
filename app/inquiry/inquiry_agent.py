@@ -365,54 +365,24 @@ async def policy_node(state: InquiryState) -> InquiryState:
     return state
 
 
-# ===== Step 5.5: Web Search Node (외부 검색) =====
-# ===== Step 5.5: Web Search Node (외부 검색) =====
+# ===== Step 5.5: Web Search Node (외부 검색 - Google Grounding) =====
 async def web_search_node(state: InquiryState) -> InquiryState:
-    """내부 DB 검색 실패 시 외부 웹 검색 수행 (Tavily AI Search + Self-Correction)"""
+    """내부 DB 검색 실패 시 외부 웹 검색 수행 (Google Gemini Grounding)"""
     question = state["question"]
-    print(f"🌐 [Tavily Search] 내부 문서 부족 -> 외부 검색 전환: {question}")
+    print(f"🌐 [Google Grounding] 내부 문서 부족 -> 구글 검색 수행: {question}")
     
-    # 🔑 Tavily API 키 입력
-    TAVILY_API_KEY = "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"
-    
-    # if TAVILY_API_KEY == "YOUR_TAVILY_KEY":
-    #     state["manual_data"] = ["❌ Tavily API 키가 설정되지 않았습니다."]
-    #     return state
-
     try:
-        from tavily import TavilyClient
-        tavily = TavilyClient(api_key=TAVILY_API_KEY)
+        from app.clients.genai import genai_generate_with_grounding
         
-        # 1차 검색 시도 (구체적 쿼리)
-        target_query = f"카페 프랜차이즈 {question}"
-        response = tavily.search(query=target_query, search_depth="basic", max_results=5)
-        raw_results = response.get('results', [])
+        # 구글 검색 Grounding을 통한 답변 생성
+        grounded_response = await genai_generate_with_grounding(question)
         
-        # 🔄 Self-Correction: 검색 결과가 없으면 쿼리 단순화 후 재시도
-        if not raw_results:
-            print(f"🔄 [Self-Correction] '{target_query}' 결과 없음 -> '{question}' 으로 재검색")
-            # 접두사 제거하고 질문 자체로 검색
-            response = tavily.search(query=question, search_depth="basic", max_results=5)
-            raw_results = response.get('results', [])
-        
-        # 결과 포맷팅
-        formatted_list = []
-        for item in raw_results:
-            title = item.get('title', '제목 없음')
-            url = item.get('url', '#')
-            content = item.get('content', '')
-            formatted_list.append(f"Title: {title}\nLink: {url}\nSnippet: {content}\n")
-        
-        if not formatted_list:
-             state["manual_data"] = ["Tavily 검색 결과가 없습니다. (재검색 포함)"]
-        else:
-             formatted_results = "[외부 웹 검색 결과 (Tavily)]\n" + "\n---\n".join(formatted_list)
-             state["manual_data"] = [formatted_results]
-        
+        # 결과 저장
+        state["manual_data"] = [f"[Google 검색 결과 기반 답변]\n{grounded_response}"]
         state["search_meta"] = {"source": "web_search", "min_distance": 0.0}
         
     except Exception as e:
-        print(f"❌ Tavily 검색 실패: {e}")
+        print(f"❌ Google Grounding 실패: {e}")
         state["manual_data"] = [f"외부 검색 연결에 실패했습니다. (Error: {str(e)})"]
         
     return state
@@ -662,13 +632,15 @@ def create_inquiry_graph():
         meta = state.get("search_meta", {})
         min_dist = meta.get("min_distance", 1.0)
         
-        # 임계값 설정 (0.45 이상이면 관련성 낮음으로 판단)
-        THRESHOLD = 0.45
+        # [Tuning] 임계값 완화 (0.45 -> 0.65)
+        # Distance가 0.65(유사도 35%) 이하여도 내부 문서를 믿고 답변하도록 설정
+        THRESHOLD = 0.65
         
         if min_dist > THRESHOLD:
-            print(f"⚠️ [Search Check] 문서 유사도 낮음 ({min_dist:.4f} > {THRESHOLD}) -> Web Search 전환")
+            print(f"⚠️ [Search Check] 문서 유사도 매우 낮음 ({min_dist:.4f} > {THRESHOLD}) -> Web Search 전환")
             return "retry_web"
         else:
+            print(f"✅ [Search Check] 내부 문서 채택 (Distance: {min_dist:.4f})")
             return "proceed"
 
     # Manual/Policy -> 평가 -> (Web Search OR Answer)

@@ -112,13 +112,16 @@ streamlit run ui/main_ui.py
 ## AWS RDS 연결
 ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -N -L 5433:database-aws.cpusiq4esjqv.ap-northeast-2.rds.amazonaws.com:5432 ubuntu@15.164.230.250 -o ServerAliveInterval=60
 
+## 서버 백엔드 서버 올리기
+python -m uvicorn main:app --host 0.0.0.0 --port 8080
+
 python -m uvicorn main:app --reload --port 8080
 streamlit run /ui/dashboard.py
 
 ./venv/scripts/activate
 source venv/bin/activate
 
-
+## RC2 터미널 접속
 AWS_EC2 = ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" ubuntu@15.164.230.250
 
 ## 💡 Trouble Shooting & Insights
@@ -128,3 +131,4 @@ AWS_EC2 = ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_
 
 ### Q. 날씨 데이터는 어떻게 분석에 활용되나요?
 매일 생성되는 매출 데이터(`sales_daily`)에는 당시의 날씨 정보가 함께 태깅됩니다. 리포트 생성 에이전트는 *"지난주 대비 매출 하락"*이라는 Fact와 *"지난주 내내 비가 옴"*이라는 Context를 결합하여 **"우천으로 인한 내점 고객 감소"**라는 인사이트를 도출합니다.
+
