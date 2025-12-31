@@ -221,16 +221,19 @@ def show_sales_dialog(store_id, store_name):
             source = report_data.get("source", "db")
             
             try:
-                # 날짜 파싱 및 기간 계산 (7일 기준)
-                r_date_str = report_data['report_date']
-                end_date = datetime.strptime(r_date_str, "%Y-%m-%d")
-                start_date = end_date - timedelta(days=6)
-                
-                # 사용자가 원하는 포맷: "2025년 12월 17일 기준 주차 (12.11 ~ 12.17)"
-                header_text = f"{end_date.year}년 {end_date.month}월 {end_date.day}일 기준 주차 ({start_date.strftime('%m.%d')} ~ {end_date.strftime('%m.%d')})"
-                
-                # 1. 메인 헤더로 기간 표시
-                st.subheader(f"� {header_text}")
+                # [수정] 사용자가 선택한 날짜(report_target_date)를 기준으로 기간 표시
+                # report_target_date는 위에서 이미 정의됨 (예: "2025-12-10")
+                if report_target_date:
+                    end_date = datetime.strptime(report_target_date, "%Y-%m-%d")
+                    start_date = end_date - timedelta(days=6)
+                    
+                    header_text = f"{end_date.year}년 {end_date.month}월 {end_date.day}일 기준 주차 ({start_date.strftime('%m.%d')} ~ {end_date.strftime('%m.%d')})"
+                    
+                    # 1. 메인 헤더로 기간 표시
+                    st.subheader(f"📑 {header_text}")
+                else:
+                    # 선택된 날짜가 없는 경우(최초 로딩 등) DB 데이터 사용 Fallback
+                    st.subheader(f"📑 리포트 정보: {report_data.get('report_date')}")
                 
                 # 2. 출처 배지 (작게)
                 if source == "cache":
@@ -239,8 +242,8 @@ def show_sales_dialog(store_id, store_name):
                     st.caption(f":gray-background[📁 DATABASE] 데이터 기반 분석")
                     
             except Exception:
-                # 날짜 파싱 실패 시 원본 그대로 출력
-                 st.subheader(f"📑 리포트 정보: {report_data['report_date']}")
+                # 날짜 파싱 실패 시 원본 그대로 출력 (header_text 사용 불가)
+                 st.subheader(f"📑 리포트 정보: {report_data.get('report_date')}")
 
             # --- 신규: 데이터 분석 근거 시각화 ---
             # DB에서 불러올 경우 risk_assessment 안에 metrics가 들어있으므로 이를 확인
@@ -315,7 +318,8 @@ def show_sales_dialog(store_id, store_name):
 
                 if evidence:
                     with st.expander("🧐 AI가 분석한 세부 근거 보기"):
-                        st.write(f"**매출 분석:** {evidence.get('sales_analysis')}")
+                        # [FIX] 마크다운 테이블/헤더가 깨지지 않도록 줄바꿈 추가
+                        st.markdown(f"**매출 분석:**\n\n{evidence.get('sales_analysis')}")
 
             # -------------------------------
 
