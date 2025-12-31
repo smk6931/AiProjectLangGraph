@@ -91,7 +91,7 @@ async def router_node(state: InquiryState) -> InquiryState:
 
 카테고리:
 - sales: 매출, 판매량, 통계, 순위 등 숫자 데이터 관련
-- manual: 기기 사용법, 청소 방법, 레시피, 고장 수리
+- manual: 기기 사용법, 청소 방법, 고장 수리
 - policy: 운영 규정, 고객 응대, 환불 정책, 복장 규정
 
 JSON 형식으로만 답변:
