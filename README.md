@@ -119,6 +119,8 @@ python -m uvicorn main:app --reload --port 8080
 streamlit run /ui/dashboard.py
 
 ./venv/scripts/activate
+
+cd AiProjectLangGraph
 source venv/bin/activate
 
 ## RC2 터미널 접속

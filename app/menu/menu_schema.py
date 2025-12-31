@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from sqlalchemy import Column, Integer, String, Boolean, Numeric
+from sqlalchemy import Column, Integer, String, Boolean, Numeric, Text
 from pgvector.sqlalchemy import Vector
 from app.core.db import base
 
@@ -12,7 +12,8 @@ class MenuSchema(BaseModel):
     base_price: float | None = None
     cost_price: float | None = None
     list_price: float | None = None
-    main_ingredient: str | None = None
+    ingredients: str | None = None
+    recipe_steps: str | None = None
     is_seasonal: bool = False
 
 # ---------- Alembic / DB 매핑용 SQLAlchemy 모델 ----------
@@ -27,7 +28,10 @@ class Menu(base):
 
     cost_price = Column(Numeric(10, 2), nullable=True)       # 원가
     list_price = Column(Numeric(10, 2), nullable=True)       # 정가
-    main_ingredient = Column(String(100), nullable=True)     # 주재료
+    
+    # 레시피 정보 (Merged from Recipe table)
+    ingredients = Column(Text, nullable=True)                # 상세 재료: 에스프레소 2샷, 우유 200ml...
+    recipe_steps = Column(Text, nullable=True)               # 제조 순서: 1. 샷 추출 2. 우유 스팀...
 
     description = Column(String(500), nullable=True)         # 메뉴 설명 (임베딩 대상)
     embedding = Column(Vector(1536), nullable=True)   # 메뉴 추천/검색용 임베딩

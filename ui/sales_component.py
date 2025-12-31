@@ -214,12 +214,33 @@ def show_sales_dialog(store_id, store_name):
         if report_data:
             st.divider()
             
-            # 출처(Source)에 따른 배지 표시
+            # report_date는 보통 문자열(YYYY-MM-DD)로 옴
+            from datetime import datetime, timedelta
+            
+            # 출처(Source) 변수 복구
             source = report_data.get("source", "db")
-            if source == "cache":
-                st.write(f"✅ **리포트 정보** : {report_data['report_date']} :blue-background[⚡ CACHE (0.1ms)]")
-            else:
-                st.write(f"✅ **리포트 정보** : {report_data['report_date']} :gray-background[📁 DATABASE]")
+            
+            try:
+                # 날짜 파싱 및 기간 계산 (7일 기준)
+                r_date_str = report_data['report_date']
+                end_date = datetime.strptime(r_date_str, "%Y-%m-%d")
+                start_date = end_date - timedelta(days=6)
+                
+                # 사용자가 원하는 포맷: "2025년 12월 17일 기준 주차 (12.11 ~ 12.17)"
+                header_text = f"{end_date.year}년 {end_date.month}월 {end_date.day}일 기준 주차 ({start_date.strftime('%m.%d')} ~ {end_date.strftime('%m.%d')})"
+                
+                # 1. 메인 헤더로 기간 표시
+                st.subheader(f"� {header_text}")
+                
+                # 2. 출처 배지 (작게)
+                if source == "cache":
+                    st.caption(f":blue-background[⚡ CACHE] 데이터 기반 분석")
+                else:
+                    st.caption(f":gray-background[📁 DATABASE] 데이터 기반 분석")
+                    
+            except Exception:
+                # 날짜 파싱 실패 시 원본 그대로 출력
+                 st.subheader(f"📑 리포트 정보: {report_data['report_date']}")
 
             # --- 신규: 데이터 분석 근거 시각화 ---
             # DB에서 불러올 경우 risk_assessment 안에 metrics가 들어있으므로 이를 확인

@@ -8,7 +8,10 @@ from app.menu import menu_router
 from app.order import order_router
 from app.review import review_router
 from app.report import report_router
+from app.report import report_router
 from app.inquiry import inquiry_router
+from app.manual import manual_router
+from app.policy import policy_router
 
 
 @asynccontextmanager
@@ -29,7 +32,10 @@ app.include_router(menu_router.router)
 app.include_router(order_router.router)
 app.include_router(review_router.router)
 app.include_router(report_router.router)
+app.include_router(report_router.router)
 app.include_router(inquiry_router.router)
+app.include_router(manual_router.router)
+app.include_router(policy_router.router)
 
 # response = genai.genai_generate_text("안녕하세요")
 # print("genai 실행", response)

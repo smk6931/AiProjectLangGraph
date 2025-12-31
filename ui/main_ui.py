@@ -5,6 +5,7 @@ from dashboard import dashboard_page
 from register import register_page
 from login import login_page
 from inquiry_page import inquiry_page
+from guide_page import guide_page
 import streamlit as st
 import sys
 import os
@@ -38,7 +39,8 @@ if "user_email" in st.session_state:
             "🧠 AI 매니저 (Main)": "inquiry_page", 
             "📊 총매출/AI 분석": "dashboard",
             "🍴 메뉴 조회": "menu_page",
-            "💬 리뷰 관리": "review_page"   
+            "💬 리뷰 관리": "review_page",
+            "📚 매뉴얼 & 규정": "guide_page"   
         }
 
         # 현재 페이지의 index 찾기
@@ -90,3 +92,6 @@ elif st.session_state.page == "menu_page":
 
 elif st.session_state.page == "review_page":
     review_page()
+
+elif st.session_state.page == "guide_page":
+    guide_page()

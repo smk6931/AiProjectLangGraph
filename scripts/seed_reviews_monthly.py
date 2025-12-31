@@ -130,8 +130,9 @@ async def process_batch(batch_items, store_id):
 async def seed_reviews_monthly():
     await init_pool()
     
-    print("🧹 기존 리뷰 데이터 전체 삭제 중...")
-    await execute("TRUNCATE TABLE reviews CASCADE")
+    # print("🧹 기존 서울(1) 리뷰 데이터 삭제 중...")
+    # await execute("DELETE FROM reviews WHERE store_id = 1")
+    print("✨ 삭제 없이 리뷰 데이터 추가 생성 시작...")
 
     print("📅 최근 30일 주문 데이터 수집 중...")
     start_date = datetime.now() - timedelta(days=32)
@@ -143,6 +144,7 @@ async def seed_reviews_monthly():
     JOIN stores s ON o.store_id = s.store_id
     LEFT JOIN sales_daily sd ON o.store_id = sd.store_id AND DATE(o.ordered_at) = sd.sale_date
     WHERE o.ordered_at >= %s
+      -- AND o.store_id = 1 -- 필터 제거 (전체 매장 대상)
     ORDER BY o.ordered_at ASC
     """
     
