@@ -838,35 +838,57 @@ async def run_search_check(store_id: int, question: str) -> Dict[str, Any]:
             top_doc = {"title": first_line, "content": content_preview[:200] + "..."}
             search_results = docs
 
-    # [Feature] AI Recommender: 후보군 중 유저가 볼만한 문서 추천
-    recommendation = {"indices": [0], "comment": "가장 유사도가 높은 문서입니다."}
+    # [Feature] AI Contextual Check: 문서 적합성 판단
+    recommendation = {"indices": [], "comment": ""}
+    
     if search_results and category != "sales":
         try:
-            # 후보군 제목만 추출
-            titles = [c.split('\n')[0] for c in search_results]
+            # 후보군 제목 + 앞부분 요약 추출
+            docs_summary = []
+            for i, c in enumerate(search_results):
+                lines = c.split('\n')
+                title = lines[0]
+                preview = lines[1][:50] + "..." if len(lines) > 1 else ""
+                docs_summary.append(f"[{i}] {title} ({preview})")
             
             rec_prompt = f"""
             질문: "{question}"
             
             검색된 문서 목록:
-            {json.dumps(titles, ensure_ascii=False)}
+            {json.dumps(docs_summary, ensure_ascii=False, indent=2)}
             
-            위 목록 중 질문과 가장 관련성이 높은 문서를 1개 이상 선택하세요.
-            그리고 그 이유를 한 문장으로 설명하세요.
+            위 문서들이 질문에 답변하기에 '충분히 관련성'이 있는지 판단하세요.
+            
+            [판단 기준]
+            - 질문의 핵심 키워드나 의도가 문서 내용과 일치하면 관련 있음 via indices.
+            - 질문과 전혀 무관하거나 엉뚱한 문서라면 indices를 비우세요 ([]).
             
             [출력 포맷(JSON)]
             {{
-                "recommended_indices": [0, 2],
-                "comment": "질문하신 '환불'과 관련된 규정은 1번과 3번 문서에 잘 나와 있습니다."
+                "relevant_indices": [0, 2],  // 관련 있는 문서 인덱스 리스트 (없으면 빈 리스트)
+                "reason": "질문하신 '환불' 규정이 0번 문서에 명시되어 있습니다." // 혹은 "내부 문서에는 관련 내용이 없어 보입니다."
             }}
             """
-            rec_res = await genai_generate_text(rec_prompt)
-            rec_data = json.loads(rec_res.replace("```json", "").replace("```", "").strip())
             
-            recommendation["indices"] = rec_data.get("recommended_indices", [0])
-            recommendation["comment"] = rec_data.get("comment", "관련된 문서를 선택했습니다.")
+            rec_res = await genai_generate_text(rec_prompt)
+            # JSON 파싱 트릭
+            clean_json = rec_res.replace("```json", "").replace("```", "").strip()
+            rec_data = json.loads(clean_json)
+            
+            relevant_indices = rec_data.get("relevant_indices", [])
+            reason = rec_data.get("reason", "")
+            
+            if relevant_indices:
+                recommendation["indices"] = relevant_indices
+                recommendation["comment"] = f"✅ AI 추천: {reason}"
+            else:
+                # LLM이 관련 없다고 판단함
+                recommendation["indices"] = []
+                recommendation["comment"] = f"⚠️ AI 판단: 내부 문서와의 연관성이 낮습니다. ({reason}) 웹 검색을 추천합니다."
+                
         except Exception as e:
             print(f"⚠️ 추천 로직 에러: {e}")
+            recommendation["comment"] = "추천 시스템 일시 오류"
 
     return {
         "category": category,
