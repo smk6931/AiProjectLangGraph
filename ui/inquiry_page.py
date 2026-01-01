@@ -160,7 +160,7 @@ def display_ai_message(message_content):
                 st.markdown("**📋 주요 리뷰 샘플 (Top 10)**")
                 for i, r in enumerate(evidence_reviews[:10]):
                     menu_tag = f"**[{r.get('menu_name', '전체')}]**" if r.get('menu_name') else ""
-                    st.markdown(f"{i+1}. {menu_tag} ⭐{r.get('rating')}: {r.get('content')}")
+                    st.markdown(f"{i+1}. {menu_tag} ⭐{r.get('rating')}: {r.get('review_text')}")
                 
                 if len(evidence_reviews) > 10:
                     st.divider()
@@ -170,7 +170,7 @@ def display_ai_message(message_content):
                     df_ev = pd.DataFrame(evidence_reviews)
                     if not df_ev.empty:
                          # UI에 보기 좋게 컬럼 정리
-                         cols_to_show = ['ordered_at', 'menu_name', 'rating', 'content']
+                         cols_to_show = ['ordered_at', 'menu_name', 'rating', 'review_text']
                          # 존재하는 컬럼만 선택
                          valid_cols = [c for c in cols_to_show if c in df_ev.columns]
                          st.dataframe(df_ev[valid_cols], use_container_width=True, hide_index=True)
