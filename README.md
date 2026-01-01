@@ -1,154 +1,120 @@
-# 🧠 AI-Powered Franchise Manager (LangGraph Agent)
+# � AI Franchise Manager (SOS Project)
 
-> **"단순한 대시보드를 넘어, 스스로 생각하고 제안하는 AI 점장님"**
->
-> LangGraph 기반의 자율 에이전트(Autonomous Agent)가 매장 데이터를 분석하고, 외부 정보(날씨, 트렌드)를 결합하여 경영 전략을 제안하는 지능형 프랜차이즈 관리 시스템입니다.
-
----
-
-## 🚀 Key Features (핵심 기능)
-
-### 1. 🤖 AI 매니저 (Autonomous Agent)
-- **LangGraph(ReAct) Architecture**: 단순 질의응답이 아닌, 스스로 필요한 도구(Tool)를 판단하고 사용하는 에이전트.
-- **Cycle & Self-Correction**: 웹 검색 결과가 부족하면 스스로 검색어를 수정하여 재검색하는 **Self-Correction** 루프 구현.
-- **Multi-Tool Integration**:
-  - `Manual Search`: 매장 운영 매뉴얼 검색 (RAG)
-  - `Policy Search`: 본사 규정/정책 검색 (RAG)
-  - `Web Search (Tavily)`: 최신 트렌드 및 외부 정보 검색
-
-### 2. 📊 주간 성과 분석 리포트 (Weekly Insight Report)
-- **Weekly Comparison Algorithm**: 단순 누적 매출이 아닌, **"지난주 vs 이번주(WoW)"** 성장률을 자동 비교 분석.
-- **Context-Aware Analysis**: 매출 데이터와 **날씨(Weather) 정보**를 결합하여, *"비가 와서 배달 매출이 늘었다"*는 식의 인과관계 추론.
-- **Automated Workflow**: `Data Fetch` → `Metric Calculation` → `AI Reasoning` → `DB Save`의 파이프라인 자동화.
-
-### 3. 💬 리뷰 심층 분석 (Vector Search RAG)
-- **pgvector & OpenAI Embeddings**: 단순 키워드 검색이 아닌, 의미 기반의 벡터 유사도 검색(Semantic Search).
-- **Sentiment Analysis**: "커피가 식었어요" 같은 불만 리뷰를 분석하여 운영 개선점 도출.
-- **Scenario**: *"비 오는 날 고객들의 주요 불만은?"* 같은 복합 질문에 대해 벡터 검색으로 답변.
+**"데이터 기반의 똑똑한 매장 관리 파트너 (AI 점장)"**  
+LangGraph와 LLM을 활용한 **지능형 매장 관리 에이전트 서비스**입니다.  
+단순한 챗봇을 넘어 SQL을 통한 **실시간 매출 분석**, **운영 매뉴얼 RAG 검색**, 그리고 **자동 웹 검색(Fallback)**을 통해 점주들의 의사결정을 지원합니다.
 
 ---
 
-## 🛠️ Tech Stack (기술 스택)
+## 🏗️ System Architecture (Flow)
 
-| Category | Technology | Usage |
-|----------|------------|-------|
-| **AI Core** | **LangGraph** | 에이전트 상태 관리, 순환(Cycle) 구조 및 의사결정 워크플로우 구현 |
-| | **LangChain** | LLM 인터페이스 및 Tool Chain 구성 |
-| | **OpenAI / Gemini** | 추론(Reasoning) 및 텍스트 생성, 임베딩(Vector) 생성 |
-| **Backend** | **Python (FastAPI)** | 비동기 API 서버 및 비즈니스 로직 처리 |
-| **Database** | **PostgreSQL** | 관계형 데이터 저장 (매출, 주문) |
-| | **pgvector** | 벡터 데이터베이스 (매뉴얼, 리뷰 임베딩 저장) |
-| **Frontend** | **Streamlit** | 인터랙티브 대시보드 및 채팅 UI 구현 |
-| **Search** | **Tavily API** | AI 전용 실시간 웹 검색 |
-
----
-
-## 🏗️ System Architecture
+이 프로젝트는 **LangGraph**를 사용하여 **Stateful Multi-Agent Workflow**를 구현했습니다.
 
 ```mermaid
-graph TD
-    User[Store Owner] -->|Chat/Query| UI[Streamlit UI]
-    UI -->|API Request| Router[FastAPI Router]
+graph LR
+    User(👤 점주) -->|질문 입력| Router{🤖 Intent Router}
     
-    subgraph "AI Agent System (LangGraph)"
-        Router --> Check{Query Type?}
-        Check -->|Sales/Analysis| ReportNode[Report Agent]
-        Check -->|General Inquiry| InquiryAgent[Inquiry Agent]
-        
-        InquiryAgent -->|Decision| Tools
-        Tools -->|Vector Search| DB[(PostgreSQL + pgvector)]
-        Tools -->|Web Search| Web[Tavily Search]
-        
-        InquiryAgent -->|Self-Correction| InquiryAgent
+    subgraph "Core Agent Modules"
+        Router -->|매출 문의| Diagnosis[📊 Diagnosis Agent\nSQL Generation]
+        Router -->|규정/매뉴얼| Manual[📘 Manual RAG\nVector Search]
     end
     
-    ReportNode -->|Fetch Data| SalesDB[(Sales Data)]
-    ReportNode -->|Reasoning| LLM[LLM (Gemini/OpenAI)]
-    ReportNode -->|Generate| Result[Strategy Report]
+    Diagnosis -->|Data Context| Answer[💬 Answer Synthesis]
+    Manual -->|Docs| Validation{✅ AI Context Check}
+    
+    Validation -->|관련성 낮음| Web[🌐 Google Search\n(Gemini Grounding)]
+    Validation -->|관련성 높음| Answer
+    Web -->|Web Results| Answer
+    
+    Answer -->|Structured JSON| UI[💻 Streamlit UI\nChart & Dashboard]
 ```
 
 ---
 
-## 🏁 Getting Started (실행 방법)
+## ✨ Key Features (핵심 기능)
 
-### 1. 환경 설정 (Environment Setup)
-```bash
-# Repository Clone
-git clone https://github.com/your-repo/ai-franchise-manager.git
+### 1. 📊 실시간 매출 분석 (Data-Driven Insight)
+- 자연어 질문을 **SQL로 자동 변환**하여 DB에서 정확한 매출 데이터를 추출합니다.
+- **Smart Period Logic**: 시스템 날짜가 아닌, **DB의 최신 데이터 날짜**를 기준으로 분석 기간을 자동 설정하여 정확도를 보장합니다.
+- **Visual Report**: 분석 결과를 **Altair 차트**와 **핵심 지표(KPI) 카드**로 시각화하여 제공합니다.
 
-# Install Dependencies
-pip install -r requirements.txt
-```
+### 2. 🛡️ 할루시네이션 방지 (Hallucination Control)
+- **Fact Check**: DB에 데이터가 없으면 거짓 정보를 생성하지 않고 **"데이터 없음"**을 명확히 고지합니다.
+- **Review Binding**: 메뉴 분석 시 실제 고객 리뷰 데이터를 정확히 매핑하여 근거를 제시합니다.
 
-### 2. 환경 변수 설정 (.env)
-```ini
-OPENAI_API_KEY=sk-...
-GEMINI_API_KEY=AIza...
-TAVILY_API_KEY=tvly-...
-DB_URL=postgresql://user:password@localhost:5432/dbname
-```
+### 3. 🌐 하이브리드 검색 (RAG + Google Grounding)
+- 내부 매뉴얼(RAG) 검색 결과의 **유사도(Similarity)**가 낮거나 맥락이 맞지 않을 경우, **Gemini 2.0 Grounding**을 통해 최신 웹 정보를 검색합니다.
+- 단순 검색 API(Tavily 등)가 아닌, **LLM 자체의 Grounding 기능**을 활용하여 신뢰도 높은 답변을 생성합니다.
 
-### 3. 데이터베이스 초기화 및 시딩 (Data Seeding)
-```bash
-# DB 테이블 생성 및 초기화 (Menu, Stores)
-# 15종 메뉴 및 3개 지점(강남, 부산, 속초) 자동 생성
-python scripts/reset_and_seed_v2.py
+---
 
-# AI 기반 고품질 리뷰 및 임베딩 생성 (Optional)
-python scripts/seed_reviews_monthly.py
-```
+## 🛠️ Technology Stack
 
-### 4. 서버 실행 (Run Server)
-```bash
-# 1. Backend API Server (FastAPI)
-python -m uvicorn main:app --reload --port 8080
+| Category | Stack | Description |
+| :--- | :--- | :--- |
+| **LLM Orchestration** | **LangChain, LangGraph** | Multi-Agent State Management & Workflow |
+| **Model** | **OpenAI GPT-4o** | Reasoning & Intent Routing |
+| **Search Engine** | **Gemini 2.0 Flash** | **Google Search Grounding** (Real-time Web Search) |
+| **Backend** | **FastAPI** | Asynchronous REST API Server |
+| **Database** | **PostgreSQL** | Relational Data Storage (Sales, Stores, Reviews) |
+| **Vector DB** | **ChromaDB / FAISS** | Semantic Search for RAG |
+| **Frontend** | **Streamlit** | Interactive Dashboard UI |
+| **Deployment** | **AWS EC2 (Ubuntu)** | Cloud Server Environment |
 
-# 2. Frontend UI (Streamlit)
-streamlit run ui/main_ui.py
+---
+
+## 💾 Database Schema (ERD)
+
+매장의 핵심 데이터를 효율적으로 관리하기 위해 정규화된 RDBMS 설계를 적용했습니다.
+
+```mermaid
+erDiagram
+    STORES ||--o{ ORDERS : has
+    STORES ||--o{ SALES_DAILY : tracks
+    MENUS ||--o{ ORDERS : included_in
+    ORDERS ||--|| REVIEWS : generates
+    
+    STORES {
+        int store_id PK
+        string store_name
+        string region
+    }
+    
+    MENUS {
+        int menu_id PK
+        string menu_name
+        string category
+    }
+    
+    ORDERS {
+        int order_id PK
+        int store_id FK
+        int menu_id FK
+        datetime ordered_at
+        int quantity
+    }
+    
+    REVIEWS {
+        int review_id PK
+        int order_id FK
+        float rating
+        text review_text
+    }
 ```
 
 ---
 
-## AWS RDS 연결
-ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -N -L 5433:database-aws.cpusiq4esjqv.ap-northeast-2.rds.amazonaws.com:5432 ubuntu@15.164.230.250 -o ServerAliveInterval=60
-
-## 서버 백엔드 서버 올리기
-python -m uvicorn main:app --host 0.0.0.0 --port 8080
-
-python -m uvicorn main:app --reload --port 8080
-streamlit run /ui/dashboard.py
-
-./venv/scripts/activate
-
-cd AiProjectLangGraph
-source venv/bin/activate
-
-## RC2 터미널 접속
-AWS_EC2 = ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" ubuntu@15.164.230.250
-
-## 💡 Trouble Shooting & Insights
-
-### Q. LangGraph를 왜 사용했나요?
-단순한 Chain(선형 구조)으로는 복잡한 문제 해결이 어렵습니다. 검색 결과가 불충분할 때 **다시 검색(Loop)**하거나, 질문의 의도를 파악해 **다른 도구(Tool)로 우회**하는 등 유연한 흐름 제어가 필요했기에 상태 머신(State Machine) 기반의 LangGraph를 도입했습니다.
-
-### Q. 날씨 데이터는 어떻게 분석에 활용되나요?
-매일 생성되는 매출 데이터(`sales_daily`)에는 당시의 날씨 정보가 함께 태깅됩니다. 리포트 생성 에이전트는 *"지난주 대비 매출 하락"*이라는 Fact와 *"지난주 내내 비가 옴"*이라는 Context를 결합하여 **"우천으로 인한 내점 고객 감소"**라는 인사이트를 도출합니다.
-
-pkill -f uvicorn
-pkill -f streamlit
-# 2. 백엔드 시작 (Backend Start)
-nohup python -m uvicorn main:app --host 0.0.0.0 --port 8080 > server.log 2>&1 &
-# 3. 프론트엔드 시작 (Frontend Start)
-nohup streamlit run ui/main_ui.py --server.port 8501 --server.address 0.0.0.0 > ui.log 2>&1 &
-
-
-## 추후에 도전할것
-FireCrawl사용 크롤링??
-
-## 📂 서버로 파일 전송 (SCP)
-로컬에 있는 프로젝트 파일을 서버로 전송할 때 사용하는 명령어입니다.
+## 📁 Project Structure
 
 ```bash
-# 로컬(Windows) -> 서버(AWS Ubuntu) 파일 전송
-scp -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -r . ubuntu@15.164.230.250:/home/ubuntu/AiProjectLangGraph/
+📦 AiProjectLangGraph
+├── 📂 app
+│   ├── 📂 core          # DB Connection, Config
+│   ├── 📂 inquiry       # LangGraph Agents (Diagnosis, Manual)
+│   └── 📂 manual        # RAG Vector Store Logic
+├── 📂 ui
+│   ├── 📄 main_ui.py    # Streamlit Entry Point
+│   ├── 📄 inquiry_page.py # User Chat Interface
+│   └── 📄 about_project.py # Architecture Visualization
+└── � README.md         # Project Documentation
 ```

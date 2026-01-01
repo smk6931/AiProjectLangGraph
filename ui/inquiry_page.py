@@ -32,7 +32,7 @@ def show_langgraph_architecture():
                     DB [label="📊 Sales DB\n(PostgreSQL)", fillcolor="#98FB98"];
                     RAG_Manual [label="📘 Manual RAG\n(Vector DB)", fillcolor="#FFB6C1"];
                     RAG_Policy [label="⚖️ Policy RAG\n(Vector DB)", fillcolor="#FFB6C1"];
-                    Web [label="🌐 Web Search\n(Tavily API)", fillcolor="#E0E0E0"];
+                    Web [label="🌐 Web Search\n(genai_google_search_tool)", fillcolor="#E0E0E0"];
                 }
                 
                 End [label="💬 최종 답변", shape=oval, fillcolor="#FFD700", style="filled,bold"];
