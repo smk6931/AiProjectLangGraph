@@ -288,10 +288,11 @@ async def diagnosis_node(state: InquiryState) -> InquiryState:
             if target_menu_ids:
                  ids_str_menu = ",".join(map(str, set(target_menu_ids)))
                  q_deep = f"""
-                    SELECT o.menu_id, r.rating, r.review_text
+                    SELECT o.menu_id, r.rating, r.review_text, o.ordered_at
                     FROM reviews r
                     JOIN orders o ON r.order_id = o.order_id
-                    WHERE o.menu_id IN ({ids_str_menu})
+                    WHERE o.menu_id IN ({ids_str_menu}) 
+                    AND DATE(o.ordered_at) BETWEEN {date_range_str}
                     ORDER BY r.created_at DESC
                  """
                  deep_reviews = await fetch_all(q_deep)
