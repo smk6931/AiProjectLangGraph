@@ -232,19 +232,64 @@ def inquiry_page():
                         del st.session_state.pending_inquiry
                         st.rerun()
             else:
-                st.markdown(f"**검색된 가장 유사한 문서** (유사도: `{score}%`)")
-                if top_doc:
-                    with st.expander(f"📄 {top_doc.get('title', '제목 없음')}", expanded=True):
-                        st.write(top_doc.get('content', '내용 없음'))
+                # [Human-in-the-loop] Top 5 Selection & AI Recommendation
+                candidates = data.get("candidates", data.get("context_data", []))
+                recommendation = data.get("recommendation", {})
+                rec_indices = recommendation.get("indices", [])
+                rec_comment = recommendation.get("comment", "")
+                
+                st.write(f"🔍 **AI가 찾은 관련 문서 (Top {len(candidates)})**")
+                
+                chosen_context = []
+                if candidates:
+                    # AI 추천 코멘트 표시
+                    if rec_comment:
+                        st.info(f"🤖 **AI 추천:** {rec_comment}")
+                    
+                    cand_map = {}
+                    default_selections = []
+                    
+                    for i, c_str in enumerate(candidates):
+                        head = c_str.split('\n')[0]
+                        label = f"{i+1}. {head}"
+                        cand_map[label] = c_str
+                        
+                        # AI가 추천한 인덱스면 기본 선택에 추가 (0-based index)
+                        if i in rec_indices:
+                            default_selections.append(label)
+                        
+                    # 다중 선택 UI (Pills)
+                    selected_labels = st.pills(
+                        "참고할 문서를 모두 선택해주세요:", 
+                        list(cand_map.keys()), 
+                        default=default_selections, 
+                        selection_mode="multi"
+                    )
+                    
+                    # 선택된 문서들 미리보기 및 컨텍스트 구성
+                    if selected_labels:
+                        with st.expander(f"📖 선택된 문서 미리보기 ({len(selected_labels)}개)", expanded=True):
+                            for label in selected_labels:
+                                sel_full = cand_map[label]
+                                header_part = sel_full.split('\n')[0]
+                                body_part = sel_full[len(header_part)+1:]
+                                st.markdown(f"**{header_part}**")
+                                st.caption(body_part[:200] + "...") # 요약해서 보여줌
+                                st.divider()
+                                chosen_context.append(sel_full)
+                    else:
+                        st.warning("선택된 문서가 없습니다.")
                 else:
-                    st.warning("관련된 문서를 찾지 못했습니다.")
+                     st.warning("관련 문서를 찾지 못했습니다.")
 
                 col1, col2, col3 = st.columns([2, 2, 1])
                 with col1:
+                    btn_text = "✅ 선택 문서로 답변" if candidates else "✅ 답변 생성 (전체 자료)"
                     btn_type = "primary" if score >= 60 else "secondary"
-                    if st.button("✅ 이 정보로 답변", type=btn_type, use_container_width=True):
+                    
+                    if st.button(btn_text, type=btn_type, use_container_width=True, disabled=(not candidates)):
                         st.session_state.processing_mode = "db"
-                        st.session_state.processing_meta = {"question": question, "category": cat, "context": data.get("context_data", [])}
+                        st.session_state.processing_meta = {"question": question, "category": cat, "context": chosen_context}
                         del st.session_state.pending_inquiry
                         st.rerun()
                 with col2:

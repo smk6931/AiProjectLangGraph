@@ -296,7 +296,7 @@ async def manual_node(state: InquiryState) -> InquiryState:
            embedding <=> '{question_vector}'::vector AS distance
     FROM manuals
     ORDER BY distance
-    LIMIT 3
+    LIMIT 5
     """
     
     rows = await fetch_all(query)
@@ -340,7 +340,7 @@ async def policy_node(state: InquiryState) -> InquiryState:
            embedding <=> '{question_vector}'::vector AS distance
     FROM policies
     ORDER BY distance
-    LIMIT 3
+    LIMIT 5
     """
     
     rows = await fetch_all(query)
@@ -669,12 +669,44 @@ async def run_search_check(store_id: int, question: str) -> Dict[str, Any]:
             top_doc = {"title": first_line, "content": content_preview[:200] + "..."}
             search_results = docs
 
+    # [Feature] AI Recommender: 후보군 중 유저가 볼만한 문서 추천
+    recommendation = {"indices": [0], "comment": "가장 유사도가 높은 문서입니다."}
+    if search_results and category != "sales":
+        try:
+            # 후보군 제목만 추출
+            titles = [c.split('\n')[0] for c in search_results]
+            
+            rec_prompt = f"""
+            질문: "{question}"
+            
+            검색된 문서 목록:
+            {json.dumps(titles, ensure_ascii=False)}
+            
+            위 목록 중 질문과 가장 관련성이 높은 문서를 1개 이상 선택하세요.
+            그리고 그 이유를 한 문장으로 설명하세요.
+            
+            [출력 포맷(JSON)]
+            {{
+                "recommended_indices": [0, 2],
+                "comment": "질문하신 '환불'과 관련된 규정은 1번과 3번 문서에 잘 나와 있습니다."
+            }}
+            """
+            rec_res = await genai_generate_text(rec_prompt)
+            rec_data = json.loads(rec_res.replace("```json", "").replace("```", "").strip())
+            
+            recommendation["indices"] = rec_data.get("recommended_indices", [0])
+            recommendation["comment"] = rec_data.get("comment", "관련된 문서를 선택했습니다.")
+        except Exception as e:
+            print(f"⚠️ 추천 로직 에러: {e}")
+
     return {
         "category": category,
         "min_distance": min_dist,
         "similarity_score": round((1 - min_dist) * 100, 1), # 0~100 점수
         "top_document": top_doc,
-        "context_data": search_results if category != "sales" else [] # 매출 데이터는 별도로 처리되므로 context에서 제외하거나 포함 가능
+        "candidates": search_results, # List of strings (formatted)
+        "context_data": search_results if category != "sales" else [],
+        "recommendation": recommendation # AI 추천 정보 추가
     }
 
 
