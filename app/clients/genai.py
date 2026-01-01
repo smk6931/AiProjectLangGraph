@@ -42,8 +42,23 @@ async def genai_generate_with_grounding(prompt: str):
         )
     )
     
-    # Grounding 메타데이터 (소스 출처 등) 추출 가능
-    # grounding_metadata = response.candidates[0].grounding_metadata
+    # Grounding 메타데이터 (소스 출처 등) 추출
+    citations = []
+    if response.candidates and response.candidates[0].grounding_metadata:
+        metadata = response.candidates[0].grounding_metadata
+        if metadata.grounding_chunks:
+            for chunk in metadata.grounding_chunks:
+                if chunk.web:
+                    title = chunk.web.title or "Link"
+                    uri = chunk.web.uri
+                    citations.append(f"- [{title}]({uri})")
     
     result_text = response.text if response.text else "답변을 생성하지 못했습니다."
+    
+    # 출처 목록이 있으면 하단에 추가
+    if citations:
+        # 중복 제거
+        unique_citations = list(dict.fromkeys(citations))
+        result_text += "\n\n**🌐 참고 출처:**\n" + "\n".join(unique_citations)
+        
     return result_text.strip()

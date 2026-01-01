@@ -144,3 +144,11 @@ nohup streamlit run ui/main_ui.py --server.port 8501 --server.address 0.0.0.0 > 
 
 ## 추후에 도전할것
 FireCrawl사용 크롤링??
+
+## 📂 서버로 파일 전송 (SCP)
+로컬에 있는 프로젝트 파일을 서버로 전송할 때 사용하는 명령어입니다.
+
+```bash
+# 로컬(Windows) -> 서버(AWS Ubuntu) 파일 전송
+scp -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -r . ubuntu@15.164.230.250:/home/ubuntu/AiProjectLangGraph/
+```

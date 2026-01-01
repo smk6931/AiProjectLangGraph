@@ -129,28 +129,72 @@ def show_sales_dialog(store_id, store_name):
         report_target_date = None
         
         if 'df_sales' in locals() and not df_sales.empty:
-            max_d = df_sales['order_date'].max() # date object
+            max_d = df_sales['order_date'].max() # DB 상 최신 날짜 (예: 12월 30일)
             min_d = df_sales['order_date'].min()
             
-            # 7일 단위로 날짜 끊어서 리스트 생성
+            # [Fix] 사용자 요청: 12월 4일부터 31일까지 1주 단위 강제 고정
+            # 1주차: 12.04 ~ 12.10
+            # 2주차: 12.11 ~ 12.17
+            # 3주차: 12.18 ~ 12.24
+            # 4주차: 12.25 ~ 12.31
+            
+            # [Dynamic] 데이터가 존재하는 기간을 기준으로 '월요일~일요일' 주차 자동 생성
             week_options = {}
-            curr = max_d
+            default_ix = 0
+            
+            # 타겟 날짜 (이전 탭에서 선택된 날짜)
+            target_obj = selected_date if 'selected_date' in locals() and selected_date else None
+            
+            # 동적 주차 리스트 생성
+            dynamic_weeks = []
+            
             from datetime import timedelta
             
-            idx = 1
-            while curr >= min_d:
-                start_w = curr - timedelta(days=6)
-                label = f"{curr.strftime('%Y년 %m월 %d일')} 기준 주차 ({start_w.strftime('%m.%d')} ~ {curr.strftime('%m.%d')})"
-                week_options[label] = str(curr)
-                curr -= timedelta(days=7)
-                idx += 1
-                if idx > 10: break # 최근 10주까지만 표시
+            curr_start = min_d
+            current_month = curr_start.month
+            week_num = 1
             
+            # 데이터 끝 날짜까지 루프
+            while curr_start <= max_d:
+                # 월이 바뀌었는지 체크하여 주차 번호 리셋
+                if curr_start.month != current_month:
+                    current_month = curr_start.month
+                    week_num = 1
+                
+                # 이번 주 일요일 찾기 (월=0, ... 일=6)
+                days_left = 6 - curr_start.weekday()
+                curr_end_ideal = curr_start + timedelta(days=days_left)
+                
+                # 실제 데이터 범위 내에서 끊기 (max_d를 넘어가면 max_d까지만)
+                real_end = min(curr_end_ideal, max_d)
+                
+                # [User Rule] 5주차는 제외하고 1~4주차만 표시
+                if week_num <= 4:
+                    dynamic_weeks.append((curr_start, real_end, current_month, week_num))
+                
+                # 다음 루프 준비 (다음주 월요일)
+                curr_start = curr_end_ideal + timedelta(days=1)
+                week_num += 1
+
+            # 최신 주차가 위로 오도록 역순 정렬하여 옵션 생성
+            for i, (s_date, e_date, month, w_num) in enumerate(reversed(dynamic_weeks)):
+                label = f"{s_date.year}년 {month}월 {w_num}주차 ({s_date.strftime('%m.%d')} ~ {e_date.strftime('%m.%d')})"
+                # 리포트 API에는 해당 주차의 마지막 날짜(데이터 기준)를 전송
+                week_options[label] = str(e_date)
+                
+                # 디폴트 선택 로직 (선택된 날짜가 포함된 주차 자동 선택)
+                if target_obj and s_date <= target_obj <= e_date:
+                    default_ix = i
+
             # UI: 주차 선택 박스
-            st.markdown("##### 📅 분석 기간 선택")
+            st.markdown("##### 📅 분석 바운더리(기간) 설정")
+            
+            options_list = list(week_options.keys())
+            
             selected_label = st.selectbox(
                 "분석할 주차를 선택하세요", 
-                options=list(week_options.keys()),
+                options=options_list,
+                index=default_ix if default_ix < len(options_list) else 0,
                 key=f"report_week_select_{store_id}",
                 label_visibility="collapsed"
             )

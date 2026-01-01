@@ -117,23 +117,72 @@ async def diagnosis_node(state: InquiryState) -> InquiryState:
     
     # 1. 검색 조건 추출
     params = await extract_search_params(state['question'])
-    target_store_id = state["store_id"]
+    initial_store_id = state.get("store_id")
+    target_store_id = initial_store_id
+    
+    # query_text = state['question']
+    query_text = state['question']
+
+    # [Logic] 전체 지점 분석 요청 감지
+    if any(k in query_text for k in ["전체", "모든", "전 지점", "모두"]):
+        print("   🌍 [Scope] 전체 지점 분석 모드로 전환")
+        target_store_id = None # None이면 전체 조회
+    else:
+        # 특정 지점 검색 로직
+        start_search_name = params.get("target_store_name")
+        if start_search_name:
+             # 지점명 매칭 로직 (간소화: DB에서 검색)
+             # 실제로는 전체 목록 캐싱해서 difflib 쓰는게 좋지만 여기선 쿼리로 대체 가능
+             # (기존 로직이 복잡해서 간단히 처리: 이름에 포함되면 ID 갱신)
+             # 여기서는 store_id가 이미 params나 state에 잘 들어온다고 가정하거나,
+             # 필요하면 여기서 `stores` 테이블 조회해서 ID 업데이트
+             
+             # 간단 매칭 쿼리
+             keyword = start_search_name.replace("지점", "").replace("점", "").strip()
+             if keyword:
+                 rows = await fetch_all(f"SELECT store_id, store_name FROM stores WHERE store_name LIKE '%{keyword}%' LIMIT 1")
+                 if rows:
+                     target_store_id = rows[0]['store_id']
+                     print(f"   📍 지점 식별: {rows[0]['store_name']} (ID: {target_store_id})")
+
+    # 2. 기준 날짜(Anchor Date) 설정 - Simulation Mode
+    # DB에 있는 '주문 내역의 가장 최근 날짜'를 기준으로 분석 기간을 잡음
+    # (datetime.now()를 쓰면 과거 데이터만 있는 경우 분석 불가)
+    
+    date_query = "SELECT MAX(order_date) as last_date FROM orders"
+    if target_store_id:
+        date_query += f" WHERE store_id = {target_store_id}"
+        
+    try:
+        date_rows = await fetch_all(date_query)
+        if date_rows and date_rows[0]['last_date']:
+            anchor_date = date_rows[0]['last_date'] # date object
+            print(f"   📅 [Anchor Date] 데이터 기준일: {anchor_date}")
+        else:
+            from datetime import date
+            anchor_date = date.today()
+            print("   ⚠️ 데이터 없음 -> 오늘 날짜 기준")
+    except Exception as e:
+        print(f"   ⚠️ 날짜 조회 실패: {e}")
+        from datetime import date
+        anchor_date = date.today()
+
     days = params.get("days", 7)
     
-    # [Smart Store Matcher] 로직은 유지 (생략 가능하면 생략하되, 기존 로직 보호를 위해 store_id 확보 중요)
-    # ... (지점 매칭 로직은 위에서 이미 완료되었다고 가정하고 생략하거나 간단히 유지) ...
-
-    # 2. 날짜 설정 (최근 데이터 기준)
-    # (실제 서비스에선 datetime.now() 사용, 여기선 시뮬레이션용 하드코딩 유지 가능성 있음)
-    start_date_str = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-    
     # =========================================================================
-    # [CORE CHANGE] 단순 일별 집계 -> '메뉴별/카테고리별 상세 분석'으로 전환
+    # [CORE CHANGE] 메뉴별/카테고리별 상세 분석 (동적 쿼리)
     # =========================================================================
     
     # (1) 많이 팔린 메뉴 & 안 팔린 메뉴 분석 (기간 자동 확장 로직)
     async def fetch_menu_stats(search_days):
-        s_date = (datetime.now() - timedelta(days=search_days)).strftime("%Y-%m-%d")
+        # 기준일(anchor_date)로부터 search_days 전
+        from datetime import timedelta
+        s_date = (anchor_date - timedelta(days=search_days)).strftime("%Y-%m-%d")
+        
+        where_clause = f"o.order_date >= '{s_date}'"
+        if target_store_id:
+            where_clause += f" AND o.store_id = {target_store_id}"
+            
         q = f"""
             SELECT 
                 m.name as menu_name,
@@ -143,8 +192,7 @@ async def diagnosis_node(state: InquiryState) -> InquiryState:
             FROM order_items oi
             JOIN orders o ON oi.order_id = o.order_id
             JOIN menus m ON oi.menu_id = m.menu_id
-            WHERE o.store_id = {target_store_id}
-              AND o.order_date >= '{s_date}'
+            WHERE {where_clause}
             GROUP BY m.name, m.category
             ORDER BY total_qty DESC
         """
@@ -157,16 +205,17 @@ async def diagnosis_node(state: InquiryState) -> InquiryState:
     # 1차 시도 (요청된 기간)
     menu_rows, real_start_date = await fetch_menu_stats(days)
     
-    # 데이터가 없으면 기간을 늘려서 재시도 (7일 -> 30일 -> 90일)
+    # 데이터가 없으면 기간을 늘려서 재시도 (7일 -> 30일)
     if not menu_rows and days < 30:
         print(f"⚠️ [Diagnosis] {days}일 데이터 없음 -> 30일로 확장 재검색")
         days = 30
         menu_rows, real_start_date = await fetch_menu_stats(30)
         
     if not menu_rows:
-        print(f"❌ [Diagnosis] 30일 데이터도 없음 -> 분석 불가")
+        target_name = "전체 지점" if target_store_id is None else f"지점ID {target_store_id}"
+        print(f"❌ [Diagnosis] 30일 데이터도 없음 -> 분석 불가 ({target_name})")
         state["sales_data"] = {
-            "summary_text": f"⚠️ 최근 {days}일간 해당 지점({state['store_name'] if state.get('store_name') else target_store_id})의 주문 데이터가 없습니다.\n데이터가 입력되었는지 확인해주세요.",
+            "summary_text": f"⚠️ 최근 {days}일간 '{target_name}'의 주문 데이터가 없습니다.\n(기준일: {anchor_date})\n데이터가 올바르게 적재되었는지 확인해주세요.",
             "diagnosis_result": "데이터 없음"
         }
         return state
@@ -179,6 +228,7 @@ async def diagnosis_node(state: InquiryState) -> InquiryState:
     top_5 = df.head(5).to_dict('records')
     
     # 2. Worst 5 (판매량 0인건 안나올 수 있으니 하위권 조회)
+    # 0개 팔린 메뉴는 이 쿼리에 안 나옴(JOIN 특성상). 적게라도 팔린 것 중 꼴찌.
     worst_5 = df.sort_values(by='total_qty').head(5).to_dict('records')
     
     # 3. 카테고리별 매출 비중
@@ -189,10 +239,13 @@ async def diagnosis_node(state: InquiryState) -> InquiryState:
     total_revenue = df['total_rev'].sum()
     total_qty = df['total_qty'].sum()
     
+    # Scope 명칭
+    scope_name = "전체 지점 통합" if target_store_id is None else f"지점ID {target_store_id}"
+    
     # (3) [Insight Generation] 분석 텍스트 생성
     # LLM에게 덩어리로 던져줄 텍스트 구성
-    analysis_context = f"=== 🕵️ 매장 상세 분석 리포트 (기간: {real_start_date} ~ 현재) ===\n"
-    analysis_context += f"지점ID: {target_store_id}\n"
+    analysis_context = f"=== 🕵️ 매장 상세 분석 리포트 ({scope_name}) ===\n"
+    analysis_context += f"기간: {real_start_date} ~ {anchor_date}\n"
     analysis_context += f"총 매출: {total_revenue:,.0f}원 / 총 판매량: {total_qty}건\n\n"
     
     analysis_context += "🔥 [Best Selling - 인기 메뉴 Top 5]\n"
@@ -420,10 +473,10 @@ async def answer_node_v2(state: InquiryState) -> InquiryState:
         "제공된 [분석용 데이터]를 기반으로 팩트에 입각한 인사이트를 제공하세요.\n\n"
         
         "[작성 규칙 - Strict Rules]\n"
-        "1. **No Hallucination (거짓말 금지)**: [분석용 데이터]에 없는 내용은 절대 지어내지 마세요. 데이터가 없으면 솔직하게 '데이터가 없습니다'라고 말하세요.\n"
-        "2. **Markdown Table**: 데이터가 충분히 존재할 때만 표를 작성하세요. 데이터가 없는데 억지로 표를 만들지 마세요.\n"
-        "3. **화폐 단위**: 반드시 **원(KRW)**을 사용하세요. (달러/USD 사용 금지)\n"
-        "4. **메뉴 이름**: '커피', '빵' 같이 뭉뚱그리지 말고, 데이터에 있는 정확한 메뉴명(예: 아이스 아메리카노)을 사용하세요.\n"
+        "1. **Reference Citation (출처 명시)**: 답변 시 반드시 **참고한 매뉴얼/규정의 제목**과 핵심 내용을 인용해서 답변하세요. 예: '참고하신 [환불 규정 가이드]에 따르면...'\n"
+        "2. **Evidence Based**: [분석용 데이터]에 있는 내용을 최우선으로 근거로 삼으세요. 유사도가 높게 나온 문서가 있다면 해당 내용을 바탕으로 답변을 구성하세요.\n"
+        "3. **Markdown Table**: 데이터가 충분히 존재할 때만 표를 작성하세요.\n"
+        "4. **화폐 단위**: 반드시 **원(KRW)**을 사용하세요.\n"
         "5. **원인 분석**: 추측이 아니라 데이터에 근거한 분석만 수행하세요."
     )
     
