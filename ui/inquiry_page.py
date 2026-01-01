@@ -60,9 +60,9 @@ def show_sample_prompts():
         with tab1:
             st.markdown("""
             - "**서울강남점**의 **매출 하락 원인**을 메뉴별로 분석해줘"
-            - "최근 1주일간 **가장 안 팔린 메뉴(Worst 5)**가 뭐야?"
+            - "최근 1주일간 가장 잘팔린 메뉴 best 5와 worst 5와 이유를 그 메뉴에 대한 리뷰를 분석하여 답변해줘
             - "**커피**와 **디저트** 카테고리 중 매출 비중이 어디가 높아?"
-            - "**부산서면점**의 **인기 메뉴 Top 3**와 판매량 표로 보여줘"
+            - "부산, 서울 지점 매출과 리뷰를 분석하여 각 지점 비교를 통한 개선점을 답변해줘"
             """)
         with tab2:
             st.markdown("""
@@ -105,7 +105,7 @@ def display_ai_message(message_content):
             json_data = message_content
             
         # 2. Key Metrics (숫자 카드) 렌더링
-        if "key_metrics" in json_data:
+        if "key_metrics" in json_data and json_data["key_metrics"]:
             metrics = json_data["key_metrics"]
             cols = st.columns(3)
             with cols[0]:
@@ -118,11 +118,20 @@ def display_ai_message(message_content):
 
         # 3. Chart Rendering (그래프)
         if "chart_data" in json_data and json_data["chart_data"]:
-            st.caption("📊 " + json_data.get("chart_setup", {}).get("title", "데이터 시각화"))
+            chart_setup = json_data.get("chart_setup") or {}
+            st.caption("📊 " + chart_setup.get("title", "데이터 시각화"))
             df = pd.DataFrame(json_data["chart_data"])
             base = alt.Chart(df).encode(x=alt.X('date', axis=alt.Axis(title='날짜')))
-            bar = base.mark_bar(color='#5DADE2').encode(y=alt.Y('sales', axis=alt.Axis(title='매출액(원)')))
-            line = base.mark_line(color='#E74C3C').encode(y=alt.Y('orders', axis=alt.Axis(title='주문수(건)')))
+            if "store" in df.columns and df['store'].nunique() > 1:
+                 # 지점이 여러개일 경우 색상으로 구분 (범례 자동 생성)
+                 base = base.encode(color='store')
+                 # 색상 지정 제거 (Altair 기본 팔레트 사용)
+                 bar = base.mark_bar().encode(y=alt.Y('sales', axis=alt.Axis(title='매출액(원)')))
+                 line = base.mark_line().encode(y=alt.Y('orders', axis=alt.Axis(title='주문수(건)')))
+            else:
+                 # 단일 지점일 경우 고정 색상 사용
+                 bar = base.mark_bar(color='#5DADE2').encode(y=alt.Y('sales', axis=alt.Axis(title='매출액(원)')))
+                 line = base.mark_line(color='#E74C3C').encode(y=alt.Y('orders', axis=alt.Axis(title='주문수(건)')))
             chart = alt.layer(bar, line).resolve_scale(y='independent')
             st.altair_chart(chart, use_container_width=True)
 
@@ -139,6 +148,34 @@ def display_ai_message(message_content):
             st.caption("📚 참고 자료:")
             for src in json_data["sources"]:
                 st.caption(f"- {src}")
+
+        # [Evidence] 분석에 활용된 실제 리뷰 (UI)
+        # [Evidence] 분석에 활용된 실제 리뷰 (UI)
+        evidence_reviews = json_data.get("used_reviews", []) or json_data.get("menu_reviews", [])
+        
+        # 데이터가 있든 없든 Expander 틀은 보여주는데, 없으면 "데이터 없음" 표시
+        with st.expander(f"🔍 분석에 활용된 리뷰 데이터 ({len(evidence_reviews)}건)", expanded=False):
+            if evidence_reviews:
+                # 1. 요약 리스트 (Top 10)
+                st.markdown("**📋 주요 리뷰 샘플 (Top 10)**")
+                for i, r in enumerate(evidence_reviews[:10]):
+                    menu_tag = f"**[{r.get('menu_name', '전체')}]**" if r.get('menu_name') else ""
+                    st.markdown(f"{i+1}. {menu_tag} ⭐{r.get('rating')}: {r.get('content')}")
+                
+                if len(evidence_reviews) > 10:
+                    st.divider()
+                    st.caption(f"외 {len(evidence_reviews)-10}건의 리뷰가 더 있습니다.")
+                    
+                    # 2. 전체 데이터 (DataFrame)
+                    df_ev = pd.DataFrame(evidence_reviews)
+                    if not df_ev.empty:
+                         # UI에 보기 좋게 컬럼 정리
+                         cols_to_show = ['ordered_at', 'menu_name', 'rating', 'content']
+                         # 존재하는 컬럼만 선택
+                         valid_cols = [c for c in cols_to_show if c in df_ev.columns]
+                         st.dataframe(df_ev[valid_cols], use_container_width=True, hide_index=True)
+            else:
+                st.caption("이 분석에는 개별 리뷰 데이터가 직접 활용되지 않았습니다.")
 
     except json.JSONDecodeError:
         st.markdown(message_content)
@@ -220,6 +257,24 @@ def inquiry_page():
             
             if cat == "sales":
                 st.write("매출 데이터를 분석하여 진단 리포트를 생성합니다.")
+                
+                # [NEW Feature] AI Analyzing Reasoning Display
+                if "sales_data" in data and "scope" in data["sales_data"]:
+                    sd = data["sales_data"]
+                    scope_map = {"ALL": "전 메뉴 / 전 지점", "SEOUL": "서울 지점 (Gangnam)", "BUSAN": "부산 지점 (Seomyeon)", "GANGWON": "강원 지점"}
+                    scope_txt = scope_map.get(sd.get('scope'), sd.get('scope'))
+                    
+                    with st.expander("🧐 AI 분석 기준 확인 (Reasoning)", expanded=True):
+                        st.markdown(f"**1. 분석 대상:** `{scope_txt}`")
+                        st.markdown(f"**2. 활용 데이터:** `{', '.join(sd.get('tables_used', []))}`")
+                        st.markdown(f"**3. 분석 기간:** `{sd.get('period')}`")
+                        
+                        # [Reasoning Display]
+                        if "reason" in sd:
+                            st.info(f"💡 **판단 근거:** {sd['reason']}")
+                        else:
+                            st.caption("AI가 질문의 의도를 분석하여 위 기준으로 데이터를 조회했습니다.")
+
                 sc1, sc2 = st.columns([2, 1])
                 with sc1:
                     if st.button("🚀 분석 시작", type="primary", use_container_width=True):

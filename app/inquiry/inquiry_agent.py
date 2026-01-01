@@ -14,46 +14,54 @@ from app.clients.genai import genai_generate_text
 from app.core.db import fetch_all
 from app.inquiry.inquiry_service import save_inquiry
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date    
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
 
-# ===== 데이터 검색용 파라미터 추출 함수 =====
+# ===== 데이터 검색용 파라미터 추출 함수 (Upgrade) =====
 async def extract_search_params(question: str):
     """
-    질문에서 검색 조건(지점명, 기간 등)을 추출
+    질문 분석 -> 분석 대상(매장들) & 필요한 데이터 소스(테이블) 결정
     """
     prompt = f"""
-    질문을 분석하여 데이터 검색 조건을 JSON으로 추출하세요.
+    당신은 데이터베이스 전문가입니다. 질문을 분석하여 아래 정보를 JSON으로 추출하세요.
     
     질문: "{question}"
     
     [추출 규칙]
-    1. target_store_name: 질문에 '강남점', '해운대' 등 지점명이나 '서울', '부산' 등 지역명이 있으면 추출 (없으면 null)
-    2. days: 조회 기간 (일수). 
-       - "어제" -> 1
-       - "지난주", "일주일" -> 7
-       - "최근 3일" -> 3
-       - "이번달", "30일" -> 30
-       - 언급 없으면 기본값 7
-    3. need_reviews: 리뷰 데이터가 필요한지 여부 (true/false)
-
+    
+    1. target_store_codes: 분석 대상 매장 코드 리스트 (배열, 1개 이상)
+       - 단일 지점 요청 시에도 리스트로 반환: "부산점" -> ["BUSAN"]
+       - "서울", "강남" -> ["SEOUL"]
+       - "부산", "서면" -> ["BUSAN"]
+       - "강원", "속초" -> ["GANGWON"]
+       - "서울하고 부산 비교해줘" -> ["SEOUL", "BUSAN"]
+       - "전체", "모든", "전 지점" 또는 언급 없음 -> ["ALL"]
+       
+    2. required_tables: 질문에 답변하기 위해 조회해야 할 테이블 리스트 (복수 선택 가능)
+       - "orders": 메뉴 판매량, 인기/비인기 메뉴 식별 (What)
+       - "sales_daily": 매출 추이, 날씨 정보 포함 (External Factor)
+       - "reviews": 판매/매출의 '원인(Why)' 분석, 고객 반응, 맛 평가 (이유/분석 요청 시 필수 포함)
+       
+    [테이블 선택 가이드]
+    - "왜 매출이 줄었어?" -> ["sales_daily", "reviews"] (추이 + 원인)
+    - "안 팔린 메뉴와 이유" -> ["orders", "reviews"] (메뉴 + 원인)
+    - "그냥 매출 보여줘" -> ["sales_daily"]
+       
     [출력 예시]
     {{
-        "target_store_name": "해운대",
-        "days": 7,
-        "need_reviews": true
+        "target_store_codes": ["SEOUL", "BUSAN"],
+        "required_tables": ["sales_daily", "reviews"],
+        "reason": "서울과 부산 지점의 매출 추이를 비교하고 고객 리뷰를 분석하기 위함"
     }}
     """
     try:
         response = await genai_generate_text(prompt)
-        # JSON 파싱 트릭 (마크다운 코드블럭 제거)
         clean_text = response.replace("```json", "").replace("```", "").strip()
         parsed = json.loads(clean_text)
-        if isinstance(parsed, dict):
-            return parsed
-        else:
-            return {"target_store_name": None, "days": 7, "need_reviews": False}
+        return parsed
     except:
-        return {"target_store_name": None, "days": 7, "need_reviews": False}
+        return {"target_store_codes": ["ALL"], "required_tables": ["sales_daily", "orders"], "reason": "Error parsing"}
 
 
 # ===== Step 1: State 정의 =====
@@ -90,9 +98,9 @@ async def router_node(state: InquiryState) -> InquiryState:
 질문: {question}
 
 카테고리:
-- sales: 매출, 판매량, 통계, 순 등 숫자 데이터 관련
-- manual: 기기 사용법, 청소 방법, 고장 수리
-- policy: 운영 규정, 고객 응대, 환불 정책, 복장 규정
+- sales: 매출 데이터 분석이 필요한 질문 (매출액, 판매량, 인기 메뉴, 데이터 기반 의사결정)
+- manual: 기기 사용법, 청소 방법, 고장 수리, 조리법 등 매뉴얼 검색
+- policy: 운영 규정, 고객 응대, 환불 정책, 근태 관리 등 정책 검색 
 
 JSON 형식으로만 답변:
 {{"category": "sales|manual|policy"}}
@@ -103,176 +111,288 @@ JSON 형식으로만 답변:
     
     state["category"] = parsed["category"]
     print(f"🔍 [Router] 질문 카테고리: {parsed['category']}")
+    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    messages = [HumanMessage(content=prompt)]
+    response = await llm.ainvoke(messages)
     
+    content = response.content.replace("```json", "").replace("```", "").strip()
+    try:
+        data = json.loads(content)
+        category = data.get("category", "sales") # 기본값 sales
+    except:
+        category = "sales"
+        
+    print(f"🔀 [Router] Category Decision: {category} (Reason: {data.get('reason', 'N/A') if 'data' in locals() else 'Parse Error'})")
+    
+    # State 업데이트
+    state["category"] = category
     return state
 
 
-# ===== Step 3: Diagnosis Node (상세 메뉴/원인 분석) =====
+# ===== Step 3: Diagnosis Node (Sales Analysis 2.0) =====
+# ===== Step 3: Diagnosis Node (Multi-Store Support) =====
 async def diagnosis_node(state: InquiryState) -> InquiryState:
-    """매출 등락의 원인을 '메뉴 단위'로 상세 분석 (Deep Dive Analysis)"""
+    """
+    [Sales Analysis V2] 
+    1. 매장 Scope 확인 (서울/부산/강원/전체)
+    2. 최근 데이터 기준일(Anchor Date) 산출
+    3. 필요한 테이블만 골라서 동적 쿼리 (Orders / SalesDaily / Reviews)
+    """
     if state["category"] != "sales":
         return state
         
-    print(f"🕵️‍♀️ [Diagnosis] 상세 원인 분석 시작: {state['question']}")
+    print(f"🕵️‍♀️ [Diagnosis V2] 분석 시작: {state['question']}")
     
-    # 1. 검색 조건 추출
-    params = await extract_search_params(state['question'])
-    initial_store_id = state.get("store_id")
-    target_store_id = initial_store_id
+    # 1. 검색 파라미터 추출 (LLM)
+    search_params = await extract_search_params(state['question'])
     
-    # query_text = state['question']
-    query_text = state['question']
-
-    # [Logic] 전체 지점 분석 요청 감지
-    if any(k in query_text for k in ["전체", "모든", "전 지점", "모두"]):
-        print("   🌍 [Scope] 전체 지점 분석 모드로 전환")
-        target_store_id = None # None이면 전체 조회
-    else:
-        # 특정 지점 검색 로직
-        start_search_name = params.get("target_store_name")
-        if start_search_name:
-             # 지점명 매칭 로직 (간소화: DB에서 검색)
-             # 실제로는 전체 목록 캐싱해서 difflib 쓰는게 좋지만 여기선 쿼리로 대체 가능
-             # (기존 로직이 복잡해서 간단히 처리: 이름에 포함되면 ID 갱신)
-             # 여기서는 store_id가 이미 params나 state에 잘 들어온다고 가정하거나,
-             # 필요하면 여기서 `stores` 테이블 조회해서 ID 업데이트
-             
-             # 간단 매칭 쿼리
-             keyword = start_search_name.replace("지점", "").replace("점", "").strip()
-             if keyword:
-                 rows = await fetch_all(f"SELECT store_id, store_name FROM stores WHERE store_name LIKE '%{keyword}%' LIMIT 1")
-                 if rows:
-                     target_store_id = rows[0]['store_id']
-                     print(f"   📍 지점 식별: {rows[0]['store_name']} (ID: {target_store_id})")
-
-    # 2. 기준 날짜(Anchor Date) 설정 - Simulation Mode
-    # DB에 있는 '주문 내역의 가장 최근 날짜'를 기준으로 분석 기간을 잡음
-    # (datetime.now()를 쓰면 과거 데이터만 있는 경우 분석 불가)
+    target_store_codes = search_params.get("target_store_codes", ["ALL"])
+    required_tables = search_params.get("required_tables", [])
+    date_range_str = search_params.get("date_range", "DATE(o.ordered_at) >= DATE('now', '-7 days')")
+    reason = search_params.get("reason", "")
     
-    date_query = "SELECT MAX(order_date) as last_date FROM orders"
-    if target_store_id:
-        date_query += f" WHERE store_id = {target_store_id}"
-        
-    try:
-        date_rows = await fetch_all(date_query)
-        if date_rows and date_rows[0]['last_date']:
-            anchor_date = date_rows[0]['last_date'] # date object
-            print(f"   📅 [Anchor Date] 데이터 기준일: {anchor_date}")
-        else:
-            from datetime import date
-            anchor_date = date.today()
-            print("   ⚠️ 데이터 없음 -> 오늘 날짜 기준")
-    except Exception as e:
-        print(f"   ⚠️ 날짜 조회 실패: {e}")
-        from datetime import date
-        anchor_date = date.today()
-
-    days = params.get("days", 7)
+    print(f"   🎯 타겟(List): {target_store_codes}, Tables: {required_tables}")
     
-    # =========================================================================
-    # [CORE CHANGE] 메뉴별/카테고리별 상세 분석 (동적 쿼리)
-    # =========================================================================
-    
-    # (1) 많이 팔린 메뉴 & 안 팔린 메뉴 분석 (기간 자동 확장 로직)
-    async def fetch_menu_stats(search_days):
-        # 기준일(anchor_date)로부터 search_days 전
-        from datetime import timedelta
-        s_date = (anchor_date - timedelta(days=search_days)).strftime("%Y-%m-%d")
-        
-        where_clause = f"o.order_date >= '{s_date}'"
-        if target_store_id:
-            where_clause += f" AND o.store_id = {target_store_id}"
-            
-        q = f"""
-            SELECT 
-                m.name as menu_name,
-                m.category,
-                COALESCE(SUM(oi.quantity), 0) as total_qty,
-                COALESCE(SUM(oi.price * oi.quantity), 0) as total_rev
-            FROM order_items oi
-            JOIN orders o ON oi.order_id = o.order_id
-            JOIN menus m ON oi.menu_id = m.menu_id
-            WHERE {where_clause}
-            GROUP BY m.name, m.category
-            ORDER BY total_qty DESC
-        """
-        try:
-            return await fetch_all(q), s_date
-        except Exception as e:
-            print(f"⚠️ 상세 쿼리 실패({e})")
-            return [], s_date
-
-    # 1차 시도 (요청된 기간)
-    menu_rows, real_start_date = await fetch_menu_stats(days)
-    
-    # 데이터가 없으면 기간을 늘려서 재시도 (7일 -> 30일)
-    if not menu_rows and days < 30:
-        print(f"⚠️ [Diagnosis] {days}일 데이터 없음 -> 30일로 확장 재검색")
-        days = 30
-        menu_rows, real_start_date = await fetch_menu_stats(30)
-        
-    if not menu_rows:
-        target_name = "전체 지점" if target_store_id is None else f"지점ID {target_store_id}"
-        print(f"❌ [Diagnosis] 30일 데이터도 없음 -> 분석 불가 ({target_name})")
-        state["sales_data"] = {
-            "summary_text": f"⚠️ 최근 {days}일간 '{target_name}'의 주문 데이터가 없습니다.\n(기준일: {anchor_date})\n데이터가 올바르게 적재되었는지 확인해주세요.",
-            "diagnosis_result": "데이터 없음"
-        }
-        return state
-
-    # (2) 데이터 가공 (Pandas 활용)
-    import pandas as pd
-    df = pd.DataFrame(menu_rows)
-    
-    # 1. Top 5 Best Sellers
-    top_5 = df.head(5).to_dict('records')
-    
-    # 2. Worst 5 (판매량 0인건 안나올 수 있으니 하위권 조회)
-    # 0개 팔린 메뉴는 이 쿼리에 안 나옴(JOIN 특성상). 적게라도 팔린 것 중 꼴찌.
-    worst_5 = df.sort_values(by='total_qty').head(5).to_dict('records')
-    
-    # 3. 카테고리별 매출 비중
-    cat_group = df.groupby('category')['total_rev'].sum().reset_index()
-    category_summary = cat_group.to_dict('records')
-    
-    # 4. 전체 요약 통계
-    total_revenue = df['total_rev'].sum()
-    total_qty = df['total_qty'].sum()
-    
-    # Scope 명칭
-    scope_name = "전체 지점 통합" if target_store_id is None else f"지점ID {target_store_id}"
-    
-    # (3) [Insight Generation] 분석 텍스트 생성
-    # LLM에게 덩어리로 던져줄 텍스트 구성
-    analysis_context = f"=== 🕵️ 매장 상세 분석 리포트 ({scope_name}) ===\n"
-    analysis_context += f"기간: {real_start_date} ~ {anchor_date}\n"
-    analysis_context += f"총 매출: {total_revenue:,.0f}원 / 총 판매량: {total_qty}건\n\n"
-    
-    analysis_context += "🔥 [Best Selling - 인기 메뉴 Top 5]\n"
-    for i, item in enumerate(top_5):
-        analysis_context += f"{i+1}. {item['menu_name']} ({item['category']}): {item['total_qty']}개 판매 ({item['total_rev']:,.0f}원)\n"
-        
-    analysis_context += "\n❄️ [Low Performance - 부진 예상 메뉴]\n"
-    for item in worst_5:
-        analysis_context += f"- {item['menu_name']}: 단 {item['total_qty']}개 판매\n"
-        
-    analysis_context += "\n🍰 [Category Share - 카테고리별 매출]\n"
-    for item in category_summary:
-        share = (item['total_rev'] / total_revenue * 100) if total_revenue > 0 else 0
-        analysis_context += f"- {item['category']}: {item['total_rev']:,.0f}원 ({share:.1f}%)\n"
-    
-    analysis_context += "\n[Data Source Verification]\n"
-    analysis_context += "위 데이터는 실제 POS/주문 시스템에서 집계된 'Fact'입니다. 이 수치를 기반으로만 답변하세요."
-
-    # state에 저장
-    state["sales_data"] = {
-        "summary_text": analysis_context, # 상세 분석 내용
-        "raw_top_5": top_5,
-        "diagnosis_result": f"총 매출 {total_revenue:,.0f}원 (상세 분석 완료)"
+    # Store ID Mapping
+    collected_data = {
+        "scope": ", ".join(target_store_codes),
+        "tables_used": required_tables,
+        "period": "최근 7일 (자동 설정)" if "7 days" in date_range_str else "사용자 지정",
+        "reason": reason
     }
     
-    print(f"   ✅ 상세 분석 완료: Best({top_5[0]['menu_name']}), Total({total_revenue:,.0f})")
+    try:
+        # DB 연결 및 스토어 ID 조회 (공통)
+        store_codes = []
+        target_ids = []
+        target_store_id = None # 단일 스토어용 (비전용)
+
+        q_stores = "SELECT store_id, store_name, region FROM stores"
+        all_stores = await fetch_all(q_stores)
+        
+        # Scope Resolution
+        if "ALL" in target_store_codes:
+            store_codes = [s['store_name'] for s in all_stores]
+            target_ids = [s['store_id'] for s in all_stores]
+        else:
+            for code in target_store_codes:
+                matched = [s for s in all_stores if code in s['store_name'] or code in s['region']]
+                if matched:
+                    for m in matched:
+                        if m['store_id'] not in target_ids:
+                            target_ids.append(m['store_id'])
+                            store_codes.append(m['store_name'])
+        
+        # [Anchor Date Fix] 데이터가 존재하는 실제 마지막 날짜 확인
+        # 현재 시스템 시간(2026년)과 데이터 시간(2025년) 불일치 해결
+        anchor_date = None
+        q_max_date = "SELECT MAX(sale_date) as last_date FROM sales_daily"
+        if target_ids:
+             ids_str = ",".join(map(str, target_ids))
+             q_max_date += f" WHERE store_id IN ({ids_str})"
+             
+        try:
+            date_rows = await fetch_all(q_max_date)
+            if date_rows and date_rows[0]['last_date']:
+                anchor_date = date_rows[0]['last_date']
+                
+                # date 객체 확인 및 변환
+                if isinstance(anchor_date, str):
+                    curr_date = datetime.strptime(anchor_date, "%Y-%m-%d").date()
+                else:
+                    curr_date = anchor_date
+                    
+                start_date = curr_date - timedelta(days=6) # 1주일
+                # [CRITICAL FIX] Postgres 호환을 위해 명시적 날짜 문자열 사용
+                date_range_str = f"'{start_date}' AND '{curr_date}'"
+                print(f"📅 [Smart Period] 데이터 기반 기간 재설정: {start_date} ~ {curr_date}")
+            else:
+                print("⚠️ [Smart Period] 데이터가 없어 기본 기간(최근 7일) 사용")
+                # Fallback: Postgres Syntax
+                date_range_str = "CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE"
+        except Exception as e:
+            print(f"⚠️ [Smart Period] Error: {e}")
+            
+        print(f"🔍 [Diagnosis] Effective Date Range: {date_range_str}")
+
+        # (A) Sales Daily (매출 추이)
+        if "sales_daily" in required_tables:
+            where_sql = f"DATE(s.sale_date) BETWEEN {date_range_str}"
+            if target_ids:
+                ids_str = ",".join(map(str, target_ids))
+                where_sql += f" AND s.store_id IN ({ids_str})"
+            
+            q_sales = f"""
+                SELECT s.sale_date, st.store_name, SUM(s.total_sales) as total_sales, SUM(s.total_orders) as total_orders, MAX(s.weather_info) as weather_info
+                FROM sales_daily s
+                JOIN stores st ON s.store_id = st.store_id
+                WHERE {where_sql}
+                GROUP BY s.sale_date, st.store_name
+                ORDER BY s.sale_date ASC
+            """
+            rows = await fetch_all(q_sales)
+            collected_data["daily_trend"] = rows
+            
+            # Chart Data
+            chart_data = []
+            for r in rows:
+                chart_data.append({
+                    "date": r['sale_date'],
+                    "store": r['store_name'],
+                    "sales": float(r['total_sales']) if r['total_sales'] else 0,
+                    "orders": int(r['total_orders']) if r['total_orders'] else 0
+                })
+            collected_data["chart_data"] = chart_data
+
+        # (B) Orders (메뉴 분석)
+        # [Safety Lock] 메뉴 분석(Orders) 시 리뷰 강제 추가
+        if "orders" in required_tables:
+            if "reviews" not in required_tables:
+                print("⚠️ [Auto-Fix] 메뉴 분석을 위해 Reviews 테이블 강제 추가")
+                required_tables.append("reviews")
+                
+            where_sql = f"DATE(o.ordered_at) BETWEEN {date_range_str}"
+            if target_ids:
+                 ids_str = ",".join(map(str, target_ids))
+                 where_sql += f" AND o.store_id IN ({ids_str})"
+            
+            q_menu = f"""
+                SELECT 
+                    m.menu_id,
+                    m.menu_name, 
+                    m.category, 
+                    SUM(o.quantity) as qty, 
+                    SUM(o.total_price) as rev
+                FROM orders o
+                JOIN menus m ON o.menu_id = m.menu_id
+                WHERE {where_sql}
+                GROUP BY m.menu_id, m.menu_name, m.category
+                ORDER BY qty DESC
+                LIMIT 5
+            """
+            # 1. Top 5 Fetch
+            rows_top = await fetch_all(q_menu)
+            print(f"📊 [Diagnosis] Top Menus Fetched: {len(rows_top)}")
+            
+            # 2. Worst 5 Fetch
+            q_worst = q_menu.replace("DESC", "ASC").replace("LIMIT 5", "LIMIT 5")
+            rows_worst = await fetch_all(q_worst)
+            print(f"📊 [Diagnosis] Worst Menus Fetched: {len(rows_worst)}")
+            
+            # 3. Review Binding Logic
+            all_target_menus = rows_top + rows_worst
+            target_menu_ids = [r['menu_id'] for r in all_target_menus]
+            
+            menu_review_map = {} 
+            
+            if target_menu_ids:
+                 ids_str_menu = ",".join(map(str, set(target_menu_ids)))
+                 q_deep = f"""
+                    SELECT o.menu_id, r.rating, r.review_text
+                    FROM reviews r
+                    JOIN orders o ON r.order_id = o.order_id
+                    WHERE o.menu_id IN ({ids_str_menu})
+                    ORDER BY r.created_at DESC
+                 """
+                 deep_reviews = await fetch_all(q_deep)
+                 print(f"💬 [Diagnosis] Bound Reviews Fetched: {len(deep_reviews)}")
+                 
+                 # UI 증거용 저장
+                 collected_data["menu_specific_reviews"] = deep_reviews
+                 
+                 for dr in deep_reviews:
+                     mid = dr['menu_id']
+                     if mid not in menu_review_map:
+                         menu_review_map[mid] = []
+                     menu_review_map[mid].append(f"⭐{dr['rating']}: {dr['review_text']}")
+            
+            # 4. Attach to Menu Data
+            for r in rows_top:
+                r['related_reviews'] = menu_review_map.get(r['menu_id'], [])[:10]
+            for r in rows_worst:
+                r['related_reviews'] = menu_review_map.get(r['menu_id'], [])[:10]
+
+            collected_data["top_selling_menus"] = rows_top
+            collected_data["low_selling_menus"] = rows_worst
+
+        # (C) Reviews (일반 조회)
+        if "reviews" in required_tables:
+            # Join with orders to get date & store filtering
+            where_sql = f"DATE(o.ordered_at) BETWEEN {date_range_str}"
+            if target_ids:
+                ids_str = ",".join(map(str, target_ids))
+                where_sql += f" AND o.store_id IN ({ids_str})"
+            
+            q_review = f"""
+                SELECT s.store_name, r.rating, r.review_text, o.ordered_at
+                FROM reviews r
+                JOIN orders o ON r.order_id = o.order_id
+                JOIN stores s ON o.store_id = s.store_id
+                WHERE {where_sql}
+                ORDER BY o.ordered_at DESC
+                LIMIT 500
+            """
+            rows = await fetch_all(q_review)
+            collected_data["recent_reviews"] = rows
+            print(f"💬 [Diagnosis] Recent Reviews Fetched: {len(rows)}")
+
+    except Exception as e:
+        print(f"❌ [Diagnosis] Critical Error: {e}")
+        collected_data["error"] = str(e)
+        collected_data["summary_text"] = f"데이터 조회 중 심각한 오류가 발생했습니다: {e}"
+        
+    # 3. Summary Generation (LLM을 위한 요약 텍스트)
+    # [Contextual Binding] 메뉴와 리뷰를 함께 제공
+    summary_text = f"=== 📊 분석 리포트 ({', '.join(store_codes)}) ===\n"
+    summary_text += f"기간: {date_range_str}\n\n"
     
+    if "daily_trend" in collected_data:
+        summary_text += "[일별 매출 데이터 (지점별 구분)]\n"
+        for r in collected_data["daily_trend"]:
+            sales_val = float(r['total_sales']) if r['total_sales'] else 0
+            weather = r.get('weather_info', '-')
+            summary_text += f"- [{r['sale_date']}] {r['store_name']}: {sales_val:,.0f}원 (주문 {r['total_orders']}건, 날씨 {weather})\n"
+
+    if "top_selling_menus" in collected_data:
+        summary_text += "\n[통합 인기 메뉴 Top 5 (Best)]\n"
+        for m in collected_data["top_selling_menus"]:
+            summary_text += f"- {m['menu_name']} ({m['category']}): {m['qty']}개 판매, {int(m['rev']):,}원\n"
+            if 'related_reviews' in m and m['related_reviews']:
+                reviews_str = " / ".join(m['related_reviews'])
+                summary_text += f"  (🔍 고객 리뷰: {reviews_str})\n"
+
+    if "low_selling_menus" in collected_data:
+        summary_text += "\n[통합 판매 저조 메뉴 Top 5 (Worst)]\n"
+        for m in collected_data["low_selling_menus"]:
+            summary_text += f"- {m['menu_name']} ({m['category']}): {m['qty']}개 판매, {int(m['rev']):,}원\n"
+            if 'related_reviews' in m and m['related_reviews']:
+                reviews_str = " / ".join(m['related_reviews'])
+                summary_text += f"  (🔍 고객 리뷰: {reviews_str})\n"
+                
+    if "recent_reviews" in collected_data and isinstance(collected_data["recent_reviews"], list):
+        summary_text += "\n[최근 고객 리뷰 데이터 (매장 전체)]\n"
+        for r in collected_data["recent_reviews"][:20]: # 상위 20개만
+            s_name = r.get('store_name', '')
+            summary_text += f"- [{s_name}] ⭐{r.get('rating')}: {r.get('review_text')}\n"
+
+    collected_data["summary_text"] = summary_text
+    
+    # 5. Result for Chat UI Chart (Chart Data Formatting)
+    if "daily_trend" in collected_data:
+        collected_data["chart_setup"] = {"title": f"지점별 매출 추이 비교 ({', '.join(store_codes)})"}
+        total_sales = sum([float(r['total_sales']) for r in collected_data["daily_trend"] if r['total_sales']])
+        total_orders = sum([int(r['total_orders']) for r in collected_data["daily_trend"] if r['total_orders']])
+        
+        collected_data["key_metrics"] = {
+            "period": "최근 7일",
+            "total_sales": total_sales,
+            "total_orders": total_orders
+        }
+
+    # 간단 진단 코멘트 (타이틀용)
+    collected_data["diagnosis_result"] = f"분석 완료: {', '.join(store_codes)} (최근 7일)"
+
+    state["sales_data"] = collected_data
     return state
 
 
@@ -475,7 +595,7 @@ async def answer_node_v2(state: InquiryState) -> InquiryState:
         "[작성 규칙 - Strict Rules]\n"
         "1. **Reference Citation (출처 명시)**: 답변 시 반드시 **참고한 매뉴얼/규정의 제목**과 핵심 내용을 인용해서 답변하세요. 예: '참고하신 [환불 규정 가이드]에 따르면...'\n"
         "2. **Evidence Based**: [분석용 데이터]에 있는 내용을 최우선으로 근거로 삼으세요. 유사도가 높게 나온 문서가 있다면 해당 내용을 바탕으로 답변을 구성하세요.\n"
-        "3. **Markdown Table**: 데이터가 충분히 존재할 때만 표를 작성하세요.\n"
+        "3. **Markdown Table 필수**: Best/Worst 메뉴, 지점 비교 등 리스트 형태의 데이터는 **반드시 Markdown 표(Table)**로 작성하여 가독성을 높이세요. (컬럼 예: 순위, 메뉴명, 판매량, 매출액가, 리뷰 요약)\n"
         "4. **화폐 단위**: 반드시 **원(KRW)**을 사용하세요.\n"
         "5. **원인 분석**: 추측이 아니라 데이터에 근거한 분석만 수행하세요."
     )
@@ -492,10 +612,46 @@ async def answer_node_v2(state: InquiryState) -> InquiryState:
     llm = ChatOpenAI(model="gpt-4o", temperature=0)
     response = await llm.ainvoke(messages)
     
-    # 4. 결과 저장 (JSON 파싱 로직 제거 -> 순수 텍스트 저장)
-    state["final_answer"] = response.content
+    # 4. 결과 저장 (Structured JSON 생성)
+    # UI가 차트, 메트릭, 리뷰 근거를 렌더링할 수 있도록 JSON 구조화
+    final_output = {
+        "answer": response.content,
+        "category": category
+    }
     
-    print(f"✅ [Analyst Answer] 분석 보고서 생성 완료")
+    if category == "sales" and "sales_data" in state:
+        sd = state["sales_data"]
+        final_output["chart_data"] = sd.get("chart_data")
+        final_output["chart_setup"] = sd.get("chart_setup")
+        final_output["key_metrics"] = sd.get("key_metrics")
+        
+        # [Evidence] 분석에 사용된 리뷰 데이터 전달 (메뉴별 + 전체 최신)
+        # 중복 제거를 위해 리스트 합치기
+        all_reviews = sd.get("recent_reviews", []) + sd.get("menu_specific_reviews", [])
+        # 간단한 중복 제거 (내용 기준)
+        seen = set()
+        unique_reviews = []
+        for r in all_reviews:
+            if r.get('review_text') and r['review_text'] not in seen:
+                seen.add(r['review_text'])
+                unique_reviews.append(r)
+                
+        final_output["used_reviews"] = unique_reviews
+        
+        # UI는 'summary' 키가 없으면 'answer'를 텍스트로 출력하지 않음? 
+        # detail에 답변 내용 저장
+        final_output["detail"] = response.content
+    else:
+        final_output["detail"] = response.content
+
+    def json_serial(obj):
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        raise TypeError(f"Type {type(obj)} not serializable")
+
+    state["final_answer"] = json.dumps(final_output, ensure_ascii=False, default=json_serial)
+    
+    print(f"✅ [Analyst Answer] 분석 보고서 생성 완료 (Structured)")
     return state
 
 
@@ -634,10 +790,22 @@ async def run_search_check(store_id: int, question: str) -> Dict[str, Any]:
     
     if category == "sales":
         # 매출은 사용자가 선택할 필요 없이 무조건 데이터 분석
+        # [NEW] 여기서 diagnosis_node를 실행해서 search_param 결과까지 state에 담김
         state = await diagnosis_node(state)
         # 매출은 유사도 개념이 아니므로 100% 신뢰로 간주
         min_dist = 0.0
-        top_doc = {"title": "매출 데이터 분석", "content": state["sales_data"]["summary_text"]}
+        # Sales Data에서 요약 정보 추출
+        sales_info = state.get("sales_data", {})
+        top_doc = {
+            "title": "매출 데이터 분석", 
+            "content": sales_info.get("summary_text", "분석 결과 없음"),
+            # 프론트엔드 전달용 메타데이터 추가
+            "search_params": {
+                "scope": sales_info.get("scope"),
+                "tables_used": sales_info.get("tables_used"),
+                "period": sales_info.get("period")
+            }
+        }
         
     elif category == "manual":
         # 매뉴얼 검색 실행
@@ -706,7 +874,8 @@ async def run_search_check(store_id: int, question: str) -> Dict[str, Any]:
         "top_document": top_doc,
         "candidates": search_results, # List of strings (formatted)
         "context_data": search_results if category != "sales" else [],
-        "recommendation": recommendation # AI 추천 정보 추가
+        "recommendation": recommendation, # AI 추천 정보 추가
+        "sales_data": state.get("sales_data", {}) # [NEW] Sales Meta Data 전달
     }
 
 
