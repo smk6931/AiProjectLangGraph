@@ -263,7 +263,9 @@ def inquiry_page():
                 c1, c2 = st.columns([1, 1])
                 if c1.button("분석 시작", type="primary", use_container_width=True):
                     st.session_state.processing_mode = "db"
-                    st.session_state.processing_meta = {"question": question, "category": category, "context": []}
+                    # [Optimization] 이미 가져온 Sales Data를 재사용하기 위해 Context에 전달
+                    sales_payload = [pending["data"].get("sales_data", {})]
+                    st.session_state.processing_meta = {"question": question, "category": category, "context": sales_payload}
                     del st.session_state.pending_inquiry
                     st.rerun()
                 if c2.button("취소", use_container_width=True):

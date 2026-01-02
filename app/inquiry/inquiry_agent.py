@@ -1,8 +1,6 @@
 import json
 from typing import Dict, Any
 from langchain_core.messages import SystemMessage, HumanMessage
-from langgraph.graph import StateGraph, END
-
 # [Refactoring] 분리된 노드들 Import (Clean Architecture)
 from app.inquiry.inquiry_schema import InquiryState
 from app.inquiry.nodes.router import router_node
@@ -11,89 +9,6 @@ from app.inquiry.nodes.retrieval import manual_node, policy_node, web_search_nod
 from app.inquiry.nodes.answer import answer_node_v2
 from app.inquiry.nodes.save import save_node
 from app.clients.genai import genai_generate_text
-
-# ===== Graph Definition (워크플로우 정의) =====
-def create_inquiry_graph():
-    """
-    LangGraph 생성 - Hybrid Search & Fallback Logic 적용
-    """
-    graph = StateGraph(InquiryState)
-    
-    # 노드 등록 (Imported from nodes/)
-    graph.add_node("router", router_node)
-    graph.add_node("sales", diagnosis_node)
-    graph.add_node("manual", manual_node)
-    graph.add_node("policy", policy_node)
-    graph.add_node("web_search", web_search_node)
-    graph.add_node("answer", answer_node_v2) 
-    graph.add_node("save", save_node)
-    
-    # 엔트리 포인트
-    graph.set_entry_point("router")
-    
-    # 🔥 핵심: Conditional Edge (에이전트가 자율적으로 경로 선택)
-    def route_question(state: InquiryState) -> str:
-        """Router 결과에 따라 분기"""
-        category = state["category"]
-        print(f"🔀 [Conditional Edge] '{category}' 노드로 라우팅")
-        return category
-    
-    graph.add_conditional_edges(
-        "router",
-        route_question,
-        {
-            "sales": "sales",
-            "manual": "manual",
-            "policy": "policy"
-        }
-    )
-    
-    # ✨ 검색 결과 평가 및 분기 로직 (핵심)
-    def evaluate_search_result(state: InquiryState) -> str:
-        """검색 품질을 평가하여 Web Search 여부 결정"""
-        meta = state.get("search_meta", {})
-        min_dist = meta.get("min_distance", 1.0)
-        
-        # [Tuning] 유사도 임계값 (0.65 이하면 Web Search)
-        THRESHOLD = 0.65
-        
-        if min_dist > THRESHOLD:
-            print(f"⚠️ [Search Check] 문서 유사도 낮음 ({min_dist:.4f}) -> Web Search 전환")
-            return "retry_web"
-        else:
-            print(f"✅ [Search Check] 내부 문서 채택 (Distance: {min_dist:.4f})")
-            return "proceed"
-
-    # Manual/Policy -> 평가 -> (Web Search OR Answer)
-    graph.add_conditional_edges(
-        "manual",
-        evaluate_search_result,
-        {
-            "proceed": "answer",
-            "retry_web": "web_search"
-        }
-    )
-    
-    graph.add_conditional_edges(
-        "policy",
-        evaluate_search_result,
-        {
-            "proceed": "answer",
-            "retry_web": "web_search"
-        }
-    )
-    
-    # Sales는 Web Search 불필요 (데이터 분석이므로)
-    graph.add_edge("sales", "answer")
-    
-    # Web Search -> Answer
-    graph.add_edge("web_search", "answer")
-    
-    # Answer → Save → END
-    graph.add_edge("answer", "save")
-    graph.add_edge("save", END)
-    
-    return graph.compile()
 
 
 # ===== [Phase 1] 검색 및 진단 실행 함수 (Entry Point) =====
@@ -239,8 +154,13 @@ async def run_final_answer_stream(store_id: int, question: str, category: str, m
     )
 
     if category == "sales": # Sales Logic
-        yield json.dumps({"step": "sales", "message": "📉 매출 데이터 분석 중..."}) + "\n"
-        state = await diagnosis_node(state)
+        # [Optimization] Phase 1에서 넘어온 데이터가 있으면 재사용 (LLM/DB 비용 절감)
+        if context_data and isinstance(context_data[0], dict):
+             yield json.dumps({"step": "sales", "message": "♻️ 기존 분석 데이터 활용 중..."}) + "\n"
+             state["sales_data"] = context_data[0]
+        else:
+             yield json.dumps({"step": "sales", "message": "📉 매출 데이터 분석 중..."}) + "\n"
+             state = await diagnosis_node(state)
         
         details = {
             "type": "analysis", 
