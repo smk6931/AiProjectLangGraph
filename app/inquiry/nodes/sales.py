@@ -87,7 +87,7 @@ async def diagnosis_node(state: InquiryState) -> InquiryState:
         # DB 연결 및 스토어 ID 조회 (공통)
         store_codes = []
         target_ids = []
-        target_store_id = None # 단일 스토어용 (비전용)
+        # target_store_id = None # 단일 스토어용 (비전용)
 
         q_stores = "SELECT store_id, store_name, region FROM stores"
         all_stores = await fetch_all(q_stores)

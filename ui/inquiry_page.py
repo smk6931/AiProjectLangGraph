@@ -251,13 +251,10 @@ def inquiry_page():
             
             if category == "sales":
                 # [분석 정보 미리보기] 직접 접근 방식 사용
-                sales_meta = pending["data"].get("sales_data", {})
-                if sales_meta:
-                    t_store = sales_meta.get("target_store_name") or "전체 지점"
-                    
+                if pending["data"].get("sales_data"):
                     st.info(f"""
                     **📋 분석 계획 (Execution Plan)**
-                    - **Target Store**: {t_store}
+                    - **Target Store**: {pending["data"]["sales_data"].get("target_store_name") or "전체 지점"}
                     - **Data Sources**: Sales(매출), Reviews(리뷰), Menus(메뉴)
                     - **Analysis Type**: Trend & Performance
                     """)

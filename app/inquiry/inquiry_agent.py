@@ -184,9 +184,15 @@ async def run_search_check(store_id: int, question: str) -> Dict[str, Any]:
             {json.dumps(docs_summary, ensure_ascii=False, indent=2)}
             
             위 문서들이 질문에 답변하기에 '충분히 관련성'이 있는지 판단하세요.
+            [Output Format]
+            JSON으로만 응답하세요:
+            {{
+                "relevant_indices": [0, 2],  // 관련 문서 번호 (없으면 [])
+                "reason": "판단 이유"
+            }}
             """
             # 간단 추천 로직 (일단 간소화)
-            rec_res = await genai_generate_text(rec_prompt + "\nJSON Output: {relevant_indices: [], reason: ''}")
+            rec_res = await genai_generate_text(rec_prompt)
             clean_json = rec_res.replace("```json", "").replace("```", "").strip()
             rec_data = json.loads(clean_json)
             

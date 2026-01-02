@@ -1,6 +1,8 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 from app.inquiry.inquiry_agent import run_search_check
+from fastapi.responses import StreamingResponse
+from app.inquiry.inquiry_agent import run_final_answer_stream
 
 router = APIRouter(prefix="/inquiry", tags=["Inquiry"])
 
@@ -39,8 +41,6 @@ async def generate_answer_stream(request: GenerateRequest):
     [Steps 2] 최종 답변 생성 (Streaming)
     사용자가 선택한 모드(DB or Web)에 따라 최종 답변을 스트리밍합니다.
     """
-    from fastapi.responses import StreamingResponse
-    from app.inquiry.inquiry_agent import run_final_answer_stream
     
     return StreamingResponse(
         run_final_answer_stream(
