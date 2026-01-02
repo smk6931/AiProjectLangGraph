@@ -1,7 +1,5 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from app.inquiry.inquiry_agent import run_search_check, run_final_answer_stream
-from app.inquiry.inquiry_schema import InquiryResponse
 
 router = APIRouter(prefix="/inquiry", tags=["Inquiry"])
 

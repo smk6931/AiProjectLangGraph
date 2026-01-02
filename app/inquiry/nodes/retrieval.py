@@ -1,58 +1,60 @@
 import json
-from langchain_openai import OpenAIEmbeddings
-from langchain_chroma import Chroma
-from app.clients.genai import genai_generate_with_grounding # Gemini Grounding
-from app.core.config import settings
+from app.clients.openai import openai_create_embedding
+from app.clients.genai import genai_generate_with_grounding
+from app.core.db import fetch_all
 from app.inquiry.state import InquiryState
-
-# 벡터 DB 설정 (임시 경로, 실제 경로에 맞게 수정 필요)
-persist_directory = "./chroma_db" 
-embeddings = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=settings.OPENAI_API_KEY)
 
 async def retrieval_node(state: InquiryState) -> InquiryState:
     """
     [Retrieval Node]
-    Manual/Policy 질문에 대해 Vector DB 검색 및 Web Search Fallback을 수행합니다.
+    Manual/Policy 질문에 대해 PostgreSQL(pgvector) 검색 및 Web Search Fallback을 수행합니다.
     """
     question = state["question"]
     category = state["category"] # manual or policy
     
-    print(f"📘 [Retrieval] Searching for category: {category}")
+    print(f"📘 [Retrieval] Searching for category: {category} (using pgvector)")
     
     search_results = []
     is_relevant = True
     recommendation = {"indices": [], "comment": ""}
 
     try:
-        # 1. RAG Vector Search
-        # (실제 구현 시엔 collection_name을 category에 따라 분기)
-        collection_name = "manual_collection" if category == "manual" else "policy_collection"
+        # 1. Query Embedding 생성
+        query_vector = await openai_create_embedding(question)
         
-        # Chroma DB가 없거나 로드 실패 시 에러 처리 필요
-        try:
-            vectorstore = Chroma(persist_directory=persist_directory, embedding_function=embeddings, collection_name=collection_name)
-            docs = vectorstore.similarity_search_with_score(question, k=3)
-            
-            # 검색 결과 가공
-            for doc, score in docs:
-                # score가 낮으면(거리가 멀면) 관련성 낮음으로 판단 (예: score > 0.5)
-                # Chroma는 L2 distance를 쓸 경우 0에 가까울수록 유사함
-                search_results.append(f"[Score: {score:.4f}] {doc.page_content}")
+        # 2. SQL Vector Search
+        # 카테고리에 따라 테이블 분기 (policy -> policies, manual -> manuals)
+        table_name = "policies" if category == "policy" else "manuals"
+        
+        # pgvector: <=> (Cosine Distance), <-> (L2 Distance), <#> (Inner Product)
+        # Cosine Distance 사용: 0(identical) ~ 2(opposite)
+        sql = f"""
+            SELECT content, (embedding <=> $1) as distance
+            FROM {table_name}
+            ORDER BY distance ASC
+            LIMIT 3
+        """
+        
+        # pgvector 쿼리 시 벡터 리스트를 문자열로 변환하여 전달
+        rows = await fetch_all(sql, str(query_vector))
+        
+        # 3. 결과 처리
+        if rows:
+            for row in rows:
+                dist = row['distance']
+                content = row['content']
+                search_results.append(f"[Distance: {dist:.4f}] {content}")
                 
-            # 가장 가까운 문서의 거리가 너무 멀면 Web Search 추천
-            if docs and docs[0][1] > 0.6: # Threshold
+            # Distance Threshold (유사도 판단 기준)
+            # 0.5 이상이면 거리가 멀다고 판단 (상황에 따라 조절 필요)
+            if rows[0]['distance'] > 0.5:
                 is_relevant = False
-                recommendation["comment"] = "⚠️ 내부 문서와 유사도가 낮습니다. 웹 검색을 추천합니다."
-                
-        except Exception as e:
-            print(f"⚠️ [VecDB Error] {e}")
-            is_relevant = False # DB 에러 시 웹 검색 유도
+                recommendation["comment"] = "⚠️ 내부 문서와 유사도가 낮습니다."
+        else:
+            is_relevant = False
+            recommendation["comment"] = "관련된 내부 문서를 찾지 못했습니다."
 
-        # 2. Web Search (Fallback or Recommendation)
-        # 만약 관련성이 낮다고 판단되면 Gemini Grounding 실행 (Optional)
-        # 여기서는 추천 메시지만 남기고, 실제 실행은 Answer 단계나 UI 선택에 맡길 수도 있음.
-        # 하지만 Auto-Feedback 루프라면 여기서 바로 Web Search를 돌릴 수도 있음.
-        
+        # 4. Web Search Fallback (관련성 낮을 때)
         if not is_relevant:
             print("🌐 [Web Search] Triggering Gemini Grounding...")
             web_res = await genai_generate_with_grounding(question)
@@ -60,6 +62,9 @@ async def retrieval_node(state: InquiryState) -> InquiryState:
 
     except Exception as e:
         print(f"❌ [Retrieval Error] {e}")
+        # DB 검색 실패 시에도 Web Search 시도
+        web_res = await genai_generate_with_grounding(question)
+        search_results.append(f"====== [Fallback Result] ======\n{web_res}")
 
     return {
         "search_results": search_results,
