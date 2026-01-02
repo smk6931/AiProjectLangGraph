@@ -1,7 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
-from app.inquiry.inquiry_agent import run_search_check, run_final_answer_stream
-from app.inquiry.inquiry_schema import InquiryResponse
+from app.inquiry.inquiry_agent import run_search_check
 
 router = APIRouter(prefix="/inquiry", tags=["Inquiry"])
 
@@ -26,7 +25,6 @@ async def check_database_search(request: InquiryRequest):
     질문을 받아 내부 DB(매뉴얼/정책)를 검색하고, 
     가장 유사한 문서와 점수를 반환합니다. (답변 생성 X)
     """
-    from app.inquiry.inquiry_agent import run_search_check
     
     result = await run_search_check(request.store_id, request.question)
     return {

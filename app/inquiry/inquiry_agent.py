@@ -17,6 +17,7 @@ import json
 from datetime import datetime, timedelta, date    
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
+from app.inquiry.inquiry_schema import InquiryState
 
 # ===== 데이터 검색용 파라미터 추출 함수 (Upgrade) =====
 async def extract_search_params(question: str):
@@ -24,19 +25,19 @@ async def extract_search_params(question: str):
     질문 분석 -> 분석 대상(매장들) & 필요한 데이터 소스(테이블) 결정
     """
     prompt = f"""
-    당신은 데이터베이스 전문가입니다. 질문을 분석하여 아래 정보를 JSON으로 추출하세요.
+    당신은 질문에서 핵심 키워드를 '있는 그대로 추출'하는 AI입니다. (번역/해석 금지)
+    질문을 분석하여 분석 대상 매장와 필요한 데이터를 JSON으로 반환하세요.
     
     질문: "{question}"
     
     [추출 규칙]
     
-    1. target_store_codes: 분석 대상 매장 코드 리스트 (배열, 1개 이상)
-       - 단일 지점 요청 시에도 리스트로 반환: "부산점" -> ["BUSAN"]
-       - "서울", "강남" -> ["SEOUL"]
-       - "부산", "서면" -> ["BUSAN"]
-       - "강원", "속초" -> ["GANGWON"]
-       - "서울하고 부산 비교해줘" -> ["SEOUL", "BUSAN"]
-       - "전체", "모든", "전 지점" 또는 언급 없음 -> ["ALL"]
+    1. target_store_codes: 분석 대상 매장명 (한글 키워드)
+       - ❌ 절대 영어로 번역하지 마세요. (No English Codes like 'SEOUL_GANGNAM')
+       - 질문에 있는 단어를 그대로 사용하세요.
+       - "강남점 매출" -> ["강남"]
+       - "서울이랑 부산 비교" -> ["서울", "부산"]
+       - "전체", "모든" -> ["ALL"]
        
     2. required_tables: 질문에 답변하기 위해 조회해야 할 테이블 리스트 (복수 선택 가능)
        - "orders": 메뉴 판매량, 인기/비인기 메뉴 식별 (What)
@@ -50,9 +51,9 @@ async def extract_search_params(question: str):
        
     [출력 예시]
     {{
-        "target_store_codes": ["SEOUL", "BUSAN"],
+        "target_store_codes": ["강남"], 
         "required_tables": ["sales_daily", "reviews"],
-        "reason": "서울과 부산 지점의 매출 추이를 비교하고 고객 리뷰를 분석하기 위함"
+        "reason": "강남점의 매출 추이와 리뷰를 분석하기 위함"
     }}
     """
     try:
@@ -63,23 +64,8 @@ async def extract_search_params(question: str):
     except:
         return {"target_store_codes": ["ALL"], "required_tables": ["sales_daily", "orders"], "reason": "Error parsing"}
 
-
-# ===== Step 1: State 정의 =====
-class InquiryState(TypedDict):
-    """에이전트 상태 관리"""
-    store_id: int
-    question: str
-    category: str  # Router가 분류한 카테고리
-    
-    # 각 노드에서 수집한 데이터
-    sales_data: Dict[str, Any]
-    manual_data: List[str]
-    policy_data: List[str]
-    
-    # 최종 결과
-    final_answer: str
-    inquiry_id: int
-    diagnosis_result: str # 새로 추가 (진단 결과 요약)
+# ===== Step 1: State 정의 (Moved to inquiry_schema.py) =====
+# class InquiryState(TypedDict): ... (Removed)
 
 
 # ===== Step 2: Router Node (질문 분류) =====
@@ -93,43 +79,50 @@ async def router_node(state: InquiryState) -> InquiryState:
     question = state["question"]
     
     prompt = f"""
-    다음 질문을 분석하여 카테고리를 정확히 하나만 선택하세요.
+    당신은 프랜차이즈 매장 질문 분류 AI입니다. 
+    질문의 핵심 의도를 파악하여 다음 3가지 중 하나로 분류하세요.
 
-    질문: {question}
+    질문: "{question}"
 
-    카테고리:
-    - sales: 매출 데이터 분석이 필요한 질문 (매출액, 판매량, 데이터 기반 의사결정)
-    - manual: 기기 사용법, 청소 방법, 고장 수리, 조리법 등 매뉴얼 검색
-    - policy: 운영 규정, 고객 응대, 환불 정책, 근태 관리 등 정책 검색 
+    1. sales (매출/데이터):
+       - 매출, 판매량, 주문 건수, 메뉴별 성과, 통계
+       - "지난주 매출 어때?", "가장 많이 팔린 메뉴는?"
 
-    JSON 형식으로만 답변:
-    {{"category": "sales|manual|policy"}}
+    2. manual (매뉴얼/기술):
+       - 기기 조작, 고장 수리, 청소 방법, 레시피
+       - "커피머신 청소 어떻게 해?", "와이파이 연결법"
+
+    3. policy (정책/외부정보):
+       - 매장 운영 규정, 환불/반품 정책, 고객 응대 매뉴얼
+       - **[중요]**: "맛집 추천", "날씨", "뉴스", "주변 상권" 등 외부 정보 검색이 필요한 경우도 'policy'로 분류
+
+    [Output Format]
+    JSON으로만 응답하세요:
+    {{"category": "sales" | "manual" | "policy", "reason": "분류 이유"}}
     """ 
     
-    result = await genai_generate_text(prompt)
-    parsed = json.loads(result)
-    
-    state["category"] = parsed["category"]
-    print(f"🔍 [Router] 질문 카테고리: {parsed['category']}")
-    llm = ChatOpenAI(model="gpt-4o", temperature=0)
-    messages = [HumanMessage(content=prompt)]
-    response = await llm.ainvoke(messages)
-    
-    content = response.content.replace("```json", "").replace("```", "").strip()
+    # LLM 호출 (Gemini로 간소화)
     try:
-        data = json.loads(content)
-        category = data.get("category", "sales") # 기본값 sales
-    except:
-        category = "sales"
+        # 가볍고 빠른 gemai 사용
+        response = await genai_generate_text(prompt)
         
-    print(f"🔀 [Router] Category Decision: {category} (Reason: {data.get('reason', 'N/A') if 'data' in locals() else 'Parse Error'})")
+        # JSON 파싱
+        content = response.replace("```json", "").replace("```", "").strip()
+        data = json.loads(content)
+        category = data.get("category", "policy") # 기본값 policy
+        reason = data.get("reason", "")
+    except Exception as e:
+        print(f"⚠️ [Router] 분류 오류 (Fallback to policy): {e}")
+        category = "policy"
+        reason = "Error Parsing"
+        data = {}
+
+    print(f"🔀 [Router] Category Decision: {category} (Reason: {reason})")
     
     # State 업데이트
     state["category"] = category
     return state
 
-
-# ===== Step 3: Diagnosis Node (Sales Analysis 2.0) =====
 # ===== Step 3: Diagnosis Node (Multi-Store Support) =====
 async def diagnosis_node(state: InquiryState) -> InquiryState:
     """
@@ -169,6 +162,7 @@ async def diagnosis_node(state: InquiryState) -> InquiryState:
 
         q_stores = "SELECT store_id, store_name, region FROM stores"
         all_stores = await fetch_all(q_stores)
+        print(f"🕵️ [Debug] DB Stores: {all_stores}") # 실제 DB에 어떻게 저장되어 있는지 확인
         
         # Scope Resolution
         if "ALL" in target_store_codes:
@@ -176,12 +170,30 @@ async def diagnosis_node(state: InquiryState) -> InquiryState:
             target_ids = [s['store_id'] for s in all_stores]
         else:
             for code in target_store_codes:
-                matched = [s for s in all_stores if code in s['store_name'] or code in s['region']]
+                # [Robust Matching] 공백 제거 후 비교 (User input vs DB)
+                clean_code = code.replace(" ", "").strip()
+                
+                matched = []
+                for s in all_stores:
+                    # DB 값도 정제
+                    db_name = s['store_name'].replace(" ", "")
+                    db_region = (s['region'] or "").replace(" ", "")
+                    
+                    # 키워드가 이름이나 지역에 포함되는지 확인
+                    if clean_code and (clean_code in db_name or clean_code in db_region):
+                        matched.append(s)
+
                 if matched:
                     for m in matched:
                         if m['store_id'] not in target_ids:
                             target_ids.append(m['store_id'])
                             store_codes.append(m['store_name'])
+                            
+        # [UI Fix] 실제 매칭된 매장명 전달 (중요)
+        if store_codes:
+            collected_data["target_store_name"] = ", ".join(store_codes)
+        else:
+            collected_data["target_store_name"] = "전체 지점 (식별 실패)" if "ALL" not in target_store_codes else "전체 지점"
         
         # [Anchor Date Fix] 데이터가 존재하는 실제 마지막 날짜 확인
         # 현재 시스템 시간(2026년)과 데이터 시간(2025년) 불일치 해결
@@ -293,8 +305,14 @@ async def diagnosis_node(state: InquiryState) -> InquiryState:
                     JOIN orders o ON r.order_id = o.order_id
                     WHERE o.menu_id IN ({ids_str_menu}) 
                     AND DATE(o.ordered_at) BETWEEN {date_range_str}
-                    ORDER BY r.created_at DESC
                  """
+                 
+                 # [Critial Fix] 지점 필터링 누락 수정
+                 if target_ids:
+                     ids_str_store = ",".join(map(str, target_ids))
+                     q_deep += f" AND o.store_id IN ({ids_str_store})"
+                     
+                 q_deep += " ORDER BY r.created_at DESC"
                  deep_reviews = await fetch_all(q_deep)
                  print(f"💬 [Diagnosis] Bound Reviews Fetched: {len(deep_reviews)}")
                  

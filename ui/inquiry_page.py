@@ -236,8 +236,8 @@ def inquiry_page():
     # 7. [Phase 2: Action Selection]
     if "pending_inquiry" in st.session_state:
         pending = st.session_state.pending_inquiry
-        data = pending["data"]
-        category = data.get("category", "general")
+        # data 변수 제거하고 직접 접근
+        category = pending["data"].get("category", "general")
         question = pending["question"]
         
         with st.chat_message("assistant"):
@@ -250,8 +250,8 @@ def inquiry_page():
             """, unsafe_allow_html=True)
             
             if category == "sales":
-                # [분석 정보 미리보기 복원]
-                sales_meta = data.get("sales_data", {})
+                # [분석 정보 미리보기] 직접 접근 방식 사용
+                sales_meta = pending["data"].get("sales_data", {})
                 if sales_meta:
                     t_store = sales_meta.get("target_store_name") or "전체 지점"
                     
@@ -273,11 +273,11 @@ def inquiry_page():
                     del st.session_state.pending_inquiry
                     st.rerun()
             else: # Manual / Policy
-                candidates = data.get("candidates", [])
+                candidates = pending["data"].get("candidates", [])
                 st.write(f"🔍 **{len(candidates)}**건의 관련 문서를 찾았습니다.")
                 
                 # [AI Recommendation]
-                recommendation = data.get("recommendation", {})
+                recommendation = pending["data"].get("recommendation", {})
                 if recommendation and recommendation.get("comment"):
                     rec_msg = recommendation["comment"]
                     if "웹 검색" in rec_msg or "낮습니다" in rec_msg:
