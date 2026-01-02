@@ -93,18 +93,18 @@ async def router_node(state: InquiryState) -> InquiryState:
     question = state["question"]
     
     prompt = f"""
-다음 질문을 분석하여 카테고리를 정확히 하나만 선택하세요.
+    다음 질문을 분석하여 카테고리를 정확히 하나만 선택하세요.
 
-질문: {question}
+    질문: {question}
 
-카테고리:
-- sales: 매출 데이터 분석이 필요한 질문 (매출액, 판매량, 인기 메뉴, 데이터 기반 의사결정)
-- manual: 기기 사용법, 청소 방법, 고장 수리, 조리법 등 매뉴얼 검색
-- policy: 운영 규정, 고객 응대, 환불 정책, 근태 관리 등 정책 검색 
+    카테고리:
+    - sales: 매출 데이터 분석이 필요한 질문 (매출액, 판매량, 데이터 기반 의사결정)
+    - manual: 기기 사용법, 청소 방법, 고장 수리, 조리법 등 매뉴얼 검색
+    - policy: 운영 규정, 고객 응대, 환불 정책, 근태 관리 등 정책 검색 
 
-JSON 형식으로만 답변:
-{{"category": "sales|manual|policy"}}
-"""
+    JSON 형식으로만 답변:
+    {{"category": "sales|manual|policy"}}
+    """ 
     
     result = await genai_generate_text(prompt)
     parsed = json.loads(result)

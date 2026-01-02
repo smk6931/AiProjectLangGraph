@@ -17,6 +17,13 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 st.set_page_config(page_title="AI Project", layout="wide")
 
+# 스타일 적용 (전역)
+try:
+    from styles import apply_custom_styles
+    apply_custom_styles()
+except ImportError:
+    pass
+
 # 세션 상태 초기화
 if "page" not in st.session_state:
     st.session_state.page = "inquiry_page" # AI 매니저를 메인으로 설정
@@ -29,18 +36,18 @@ if "user_email" not in st.session_state:
 # --- 사이드바 내비게이션 (로그인한 경우만 표시) ---
 if "user_email" in st.session_state:
     with st.sidebar:
-        st.title("📌 관리 메뉴")
-        st.markdown("👋 환영합니다, **점주님**!")
+        st.title("관리 메뉴")
+        st.markdown("환영합니다, **점주님**!")
         
         st.divider()
 
-        # 페이지 이름과 내부 키 매핑 (순서 변경: AI 매니적 최상단)
+        # 페이지 이름과 내부 키 매핑 (이모티콘 제거)
         nav_options = {
-            "🧠 AI 매니저 (Main)": "inquiry_page", 
-            "📊 총매출/AI 분석": "dashboard",
-            "🍴 메뉴 조회": "menu_page",
-            "💬 리뷰 관리": "review_page",
-            "📚 매뉴얼 & 규정": "guide_page"   
+            "AI 매니저 (Main)": "inquiry_page", 
+            "총매출/AI 분석": "dashboard",
+            "메뉴 조회": "menu_page",
+            "리뷰 관리": "review_page",
+            "매뉴얼 & 규정": "guide_page"   
         }
 
         # 현재 페이지의 index 찾기

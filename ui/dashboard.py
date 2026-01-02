@@ -5,10 +5,10 @@ import plotly.express as px
 from sales_component import show_sales_dialog
 from api_utils import get_api
 
-
 def dashboard_page():
-    st.title("🚀 Dashboard")
-    st.write(f"환영합니다 👋 {st.session_state.get('user_email')}")
+    # Premium Gradient Header
+    st.markdown("<h1> Dashboard</h1>", unsafe_allow_html=True)
+    st.caption(f"환영합니다, {st.session_state.get('user_email')}님 | 실시간 매장 모니터링")
 
     st.divider()
 
@@ -20,7 +20,7 @@ def dashboard_page():
     stores = pd.DataFrame(stores_data)
 
     # 2️⃣ 지점 현황 지도 & 리스트 (2단 레이아웃)
-    st.subheader("🗺️ 전국 매장 현황")
+    st.subheader("전국 매장 현황")
 
     col_map, col_list = st.columns([3, 1])
 

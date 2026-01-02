@@ -3,6 +3,11 @@ import pandas as pd
 import altair as alt
 from datetime import date
 from api_utils import get_api
+# 스타일 임포트
+try:
+    from styles import show_metric_card
+except ImportError:
+    from ui.styles import show_metric_card
 
 
 @st.dialog("📊 지점 매출 상세 현황", width="large")
@@ -109,9 +114,9 @@ def show_sales_dialog(store_id, store_name):
                     display_df.columns = ['메뉴명', '수량', '금액', '주문시간']
 
                     m1, m2, m3 = st.columns(3)
-                    m1.metric("선택 날짜", str(selected_date))
-                    m2.metric("총 주문", f"{len(df_day)}건")
-                    m3.metric("총 매출", f"{int(df_day['total_price'].sum()):,}원")
+                    show_metric_card(m1, "선택 날짜", str(selected_date))
+                    show_metric_card(m2, "총 주문", f"{len(df_day)}건")
+                    show_metric_card(m3, "총 매출", f"{int(df_day['total_price'].sum()):,}원")
 
                     st.dataframe(display_df, width='stretch',
                                  hide_index=True)
@@ -303,14 +308,14 @@ def show_sales_dialog(store_id, store_name):
                 trend = metrics.get('trend_percent', 0)
                 rating = metrics.get('avg_rating', 0)
                 
-                m_col1.metric("총 매출 (7일)", f"{int(total_rev):,}원")
-                m_col2.metric("매출 변동 추세", f"{trend:+.1f}%", delta=f"{trend:.1f}%")
-                m_col3.metric("평균 리뷰 평점", f"{rating:.1f} / 5.0")
+                show_metric_card(m_col1, "총 매출 (7일)", f"{int(total_rev):,}원")
+                show_metric_card(m_col2, "매출 변동 추세", f"{trend:+.1f}%", delta=f"{trend:.1f}%")
+                show_metric_card(m_col3, "평균 리뷰 평점", f"{rating:.1f} / 5.0")
                 
                 # --- 신규: 분석에 사용된 로우 데이터(Raw Data) 시각화 ---
                 source_data = report_data.get("source_data") or risk_data.get("source_data")
                 if source_data and "recent_sales" in source_data:
-                    with st.expander("📝 분석에 사용된 기초 데이터 확인 (메뉴/요인별)", expanded=False):
+                    with st.expander("📝 Raw Data Analysis (Source)", expanded=False):
                         st.write("AI가 분석의 근거로 활용한 세부 데이터를 확인하세요.")
                         
                         t1, t2, t3 = st.tabs(["📊 매출/날씨 통합", "🍔 메뉴별 분석", "📅 요일/시간 분석"])

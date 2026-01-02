@@ -112,6 +112,9 @@ streamlit run ui/main_ui.py
 ## AWS RDS 연결
 ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -N -L 5433:database-aws.cpusiq4esjqv.ap-northeast-2.rds.amazonaws.com:5432 ubuntu@15.164.230.250 -o ServerAliveInterval=60
 
+## RC2 터미널 접속
+AWS_EC2 = ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" ubuntu@15.164.230.250
+
 ## 서버 백엔드 서버 올리기
 python -m uvicorn main:app --host 0.0.0.0 --port 8080
 
@@ -123,8 +126,6 @@ streamlit run /ui/dashboard.py
 cd AiProjectLangGraph
 source venv/bin/activate
 
-## RC2 터미널 접속
-AWS_EC2 = ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" ubuntu@15.164.230.250
 
 ## 💡 Trouble Shooting & Insights
 
@@ -151,4 +152,3 @@ FireCrawl사용 크롤링??
 ```bash
 # 로컬(Windows) -> 서버(AWS Ubuntu) 파일 전송
 scp -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -r . ubuntu@15.164.230.250:/home/ubuntu/AiProjectLangGraph/
-```

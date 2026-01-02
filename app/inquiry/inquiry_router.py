@@ -11,6 +11,13 @@ class InquiryRequest(BaseModel):
     store_id: int
     question: str
 
+class GenerateRequest(BaseModel):
+    store_id: int
+    question: str
+    category: str
+    mode: str # 'db' or 'web'
+    context_data: list = [] # DB 모드일 때 사용할 검색 결과 리스트
+
 
 @router.post("/check", response_model=dict)
 async def check_database_search(request: InquiryRequest):
@@ -26,14 +33,6 @@ async def check_database_search(request: InquiryRequest):
         "success": True,
         "data": result
     }
-
-
-class GenerateRequest(BaseModel):
-    store_id: int
-    question: str
-    category: str
-    mode: str # 'db' or 'web'
-    context_data: list = [] # DB 모드일 때 사용할 검색 결과 리스트
 
 
 @router.post("/generate/stream")
