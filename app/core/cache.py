@@ -31,6 +31,8 @@ def _make_key(store_id: int, target_date: date) -> str:
     """캐시 키 생성: 'report:1:2025-12-21'"""
     return f"report:{store_id}:{target_date.isoformat()}"
 
+
+
 async def get_report_cache(store_id: int, target_date: date) -> Optional[dict]:
     """캐시에서 데이터 조회 (Redis or Memory)"""
     key = _make_key(store_id, target_date)
@@ -56,6 +58,8 @@ async def get_report_cache(store_id: int, target_date: date) -> Optional[dict]:
         return data
         
     return None
+
+
 
 async def set_report_cache(store_id: int, data: Any, target_date: date, ttl: int = 86400):
     """캐시에 데이터 저장 (Redis & Memory)"""

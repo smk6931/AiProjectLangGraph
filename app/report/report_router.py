@@ -1,15 +1,16 @@
 from fastapi import APIRouter, HTTPException
+from app.report.report_schema import GenerateReportRequest
 from app.report.report_service import generate_ai_store_report, select_latest_report
 
 router = APIRouter(prefix="/report", tags=["report"])
 
 
-@router.post("/generate/{store_id}")
-async def post_generate_report(store_id: int, store_name: str, mode: str = "sequential", target_date: str = None):
+@router.post("/generate")
+async def post_generate_report(request: GenerateReportRequest):
     """
-    AI 전략 리포트 생성 요청 (mode: sequential, target_date: YYYY-MM-DD)
+    AI 전략 리포트 생성 요청 (Request Body 사용 - store_id 포함)
     """
-    result = await generate_ai_store_report(store_id, store_name, mode, target_date)
+    result = await generate_ai_store_report(request.store_id, request.store_name, request.mode, request.target_date)
     if not result:
         raise HTTPException(status_code=500, detail="리포트 생성에 실패했습니다.")
     return result

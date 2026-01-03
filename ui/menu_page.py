@@ -15,6 +15,10 @@ def menu_page():
     if menu_data:
         # DataFrame으로 변환
         df = pd.DataFrame(menu_data)
+        
+        # [UX] 불필요한 embedding 데이터 숨기기
+        if 'embedding' in df.columns:
+            df = df.drop(columns=['embedding'])
 
         # 컬럼 한글화
         column_mapping = {

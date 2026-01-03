@@ -1,11 +1,16 @@
 from pydantic import BaseModel
 from datetime import date, datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from sqlalchemy import Column, Integer, String, Text, Date, ForeignKey, JSON
 from app.core.db import base
 
 # ---------- API / JSON 용 Pydantic 스키마 ----------
 
+class GenerateReportRequest(BaseModel):
+    store_id: int  # [NEW] Body에 포함
+    store_name: str
+    mode: str = "sequential"
+    target_date: Optional[str] = None # YYYY-MM-DD
 
 class StoreReportSchema(BaseModel):
     report_id: int

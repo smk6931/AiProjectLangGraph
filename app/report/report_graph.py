@@ -206,59 +206,84 @@ async def analyze_data_node(state: ReportState):
     2. **날씨와 매출의 상관관계**를 반드시 언급하세요. 
        - "지난주 대비 비오는 날이 많아 배달 매출이 늘었다" 등 구체적으로.
     3. 수치적 근거(Top 5 메뉴명, 주말 매출 변동률 등)를 포함하여 마크다운 표로 시각화하세요.
-    4. 모든 줄바꿈(개행)은 실제 줄바꿈 대신 '\\n' 문자를 사용하세요. (JSON 포맷 준수)
     
-    응답은 반드시 아래 JSON 형식으로만 할 것:
-    {{
-        "data_evidence": {{
-            "sales_analysis": "주간 매출 비교, 날씨, 메뉴 데이터를 종합한 상세 분석 (마크다운 표 포함 필수)"
-        }},
-        "summary": "핵심 요약 (지난주 대비 변동 원인 포함 3줄)",
-        "marketing_strategy": "다음주 매출 증대를 위한 날씨/트렌드 기반 마케팅 제안",
-        "operational_improvement": "매장 운영 효율화 및 서비스 개선 제안",
-        "risk_assessment": {{"risk_score": 80, "main_risks": [], "suggestion": ""}}
-    }}
+    응답은 반드시 아래 태그 형식을 사용하여 작성할 것 (JSON 아님):
+
+    <SECTION:SALES_ANALYSIS>
+    주간 매출 비교, 날씨, 메뉴 데이터를 종합한 상세 분석 내용 (마크다운 표 포함)
+    </SECTION:SALES_ANALYSIS>
+
+    <SECTION:SUMMARY>
+    핵심 요약 (지난주 대비 변동 원인 포함 3줄)
+    </SECTION:SUMMARY>
+
+    <SECTION:STRATEGY>
+    다음주 매출 증대를 위한 날씨/트렌드 기반 마케팅 제안
+    </SECTION:STRATEGY>
+
+    <SECTION:IMPROVEMENT>
+    매장 운영 효율화 및 서비스 개선 제안
+    </SECTION:IMPROVEMENT>
+
+    <SECTION:RISK>
+    // Must be valid JSON string. NO trailing commas! Use double quotes.
+    {{"risk_score": 80, "main_risks": ["리스크1", "리스크2"], "suggestion": "긴급 제언"}}
+    </SECTION:RISK>
     """
 
     raw_text = await genai_generate_text(prompt)
     
-    # 1. 마크다운 코드블록 제거
-    if "```json" in raw_text:
-        raw_text = raw_text.split("```json")[1].split("```")[0].strip()
-    elif "```" in raw_text:
-        raw_text = raw_text.split("```")[1].split("```")[0].strip()
-        
-    # 2. 제어 문자(Control Characters) 제거 (JSON 파싱 에러 방지)
+    # [NEW] Tag-based Parsing Logic (Robust)
     import re
-    # \n(\x0A), \t(\x09), \r(\x0D)은 살리고 그 외의 제어 문자만 제거 (마크다운 표 보존)
-    cleaned_json = re.sub(r'[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]', '', raw_text)
     
-    # [NEW] Trailing Comma 제거 (Standard JSON 호환성 확보)
-    # 예: {"a": 1,} -> {"a": 1}
-    cleaned_json = re.sub(r',\s*([}\]])', r'\1', cleaned_json)
-    
+    def extract_section(tag, text):
+        pattern = f"<{tag}>(.*?)</{tag}>"
+        match = re.search(pattern, text, re.DOTALL)
+        return match.group(1).strip() if match else ""
+
     try:
-        # dirtyjson 대신 표준 json 사용 + 정규식 전처리
-        report_dict = json.loads(cleaned_json, strict=False)
-    except Exception:
-        try:
-            # 2차 시도: 역슬래시 이중 치환 후 재시도
-            cleaned_json_fixed = cleaned_json.replace('\\', '\\\\')
-            report_dict = json.loads(cleaned_json_fixed, strict=False)
-        except Exception as e:
-            print(f"❌ [Analyze] JSON 파싱 최종 실패: {e}")
-            print("--- [AI Raw Output Start] ---")
-            print(raw_text) # 전체 출력 (디버깅용)
-            print("--- [AI Raw Output End] ---")
-            
-            # Fallback: 기본 빈 템플릿 반환
-            report_dict = {
-                "data_evidence": {"sales_analysis": "데이터 분석 실패 (AI 응답 형식 오류)"},
-                "summary": "리포트 생성 중 오류가 발생했습니다.",
-                "marketing_strategy": "",
-                "operational_improvement": "",
-                "risk_assessment": {"risk_score": 0, "main_risks": [], "suggestion": ""}
-            }
+        sales_analysis = extract_section("SECTION:SALES_ANALYSIS", raw_text)
+        summary = extract_section("SECTION:SUMMARY", raw_text)
+        strategy = extract_section("SECTION:STRATEGY", raw_text)
+        improvement = extract_section("SECTION:IMPROVEMENT", raw_text)
+        risk_text = extract_section("SECTION:RISK", raw_text)
+        
+        # Risk 섹션만 JSON 파싱 시도 (구조화된 데이터가 필요하므로)
+        risk_data = {"risk_score": 0, "main_risks": [], "suggestion": ""}
+        if risk_text:
+            try:
+                # 제어 문자 제거 후 파싱
+                risk_text_clean = re.sub(r'[\x00-\x1F\x7F]', '', risk_text)
+                risk_data = json.loads(risk_text_clean, strict=False)
+            except:
+                print(f"⚠️ Risk JSON 파싱 실패, 기본값 사용. Valid Text: {risk_text[:100]}")
+
+        # 필수 섹션이 비어있으면 실패로 간주 (최소 sales_analysis는 있어야 함)
+        if not sales_analysis:
+             raise ValueError("Main analysis section missing")
+
+        report_dict = {
+            "data_evidence": {"sales_analysis": sales_analysis},
+            "summary": summary,
+            "marketing_strategy": strategy,
+            "operational_improvement": improvement,
+            "risk_assessment": risk_data
+        }
+
+    except Exception as e:
+        print(f"❌ [Analyze] 태그 파싱 실패: {e}")
+        print("--- [AI Raw Output Start] ---")
+        print(raw_text)
+        print("--- [AI Raw Output End] ---")
+        
+        # Fallback
+        report_dict = {
+            "data_evidence": {"sales_analysis": "데이터 분석 실패 (형식 오류)"},
+            "summary": "리포트 생성 중 오류가 발생했습니다.",
+            "marketing_strategy": "",
+            "operational_improvement": "",
+            "risk_assessment": {"risk_score": 0, "main_risks": [], "suggestion": ""}
+        }
     
     # UI용 통계 데이터 및 소스 데이터 추가
     report_dict["metrics"] = {

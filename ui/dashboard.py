@@ -19,6 +19,10 @@ def dashboard_page():
         return
     stores = pd.DataFrame(stores_data)
 
+    # [Session State 초기화] 지도와 리스트박스 연동을 위한 인덱스 관리
+    if "selected_store_idx" not in st.session_state:
+        st.session_state.selected_store_idx = 0
+
     # 2️⃣ 지점 현황 지도 & 리스트 (2단 레이아웃)
     st.subheader("전국 매장 현황")
 
@@ -70,13 +74,22 @@ def dashboard_page():
         st.write("#### 🏪 매장 선택")
         st.caption("목록에서 선택하거나 지도를 클릭하세요.")
         
+        # [Sync] Session Index를 사용하여 선택 동기화
         selected_store_name = st.selectbox(
             "매장 목록",
             stores["store_name"],
-            label_visibility="collapsed"
+            index=st.session_state.selected_store_idx,
+            label_visibility="collapsed",
+            key="store_selectbox" # Key 부여
         )
         
-        store_row_manual = stores[stores["store_name"] == selected_store_name].iloc[0]
+        # Selectbox로 변경 시에도 Index 업데이트 (역방향 동기화)
+        # 현재 선택된 이름의 Index 찾기
+        current_idx = stores[stores["store_name"] == selected_store_name].index[0]
+        if current_idx != st.session_state.selected_store_idx:
+             st.session_state.selected_store_idx = int(current_idx) # int64 -> int 변환
+        
+        store_row_manual = stores.iloc[st.session_state.selected_store_idx]
         
         st.info(f"📍 **{store_row_manual['city']}**\n\n{store_row_manual['store_name']}")
         
@@ -89,14 +102,11 @@ def dashboard_page():
         if points:
             # 클릭된 첫 번째 점의 데이터 추출
             point_data = points[0]
-            # Plotly fig의 custom_data나 hover_data 순서에 따라 인덱스로 접근
-            # 여기서는 stores 데이터에서 index를 찾아 처리하는 것이 안전함
             point_index = point_data.get("point_index")
-            if point_index is not None:
-                store_row = stores.iloc[point_index]
-
-                # 클릭 즉시 매출 다이얼로그 호출
-                show_sales_dialog(
-                    store_row['store_id'], store_row['store_name'])
+            
+            if point_index is not None and point_index != st.session_state.selected_store_idx:
+                # 상태 업데이트 후 리런 -> 리스트박스와 정보창이 갱신됨
+                st.session_state.selected_store_idx = int(point_index) # 안전하게 int 변환
+                st.rerun()
 
     st.divider()

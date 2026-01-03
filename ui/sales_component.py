@@ -22,8 +22,12 @@ def show_sales_dialog(store_id, store_name):
     tab1, tab2 = st.tabs(["📊 매출 현황", "🤖 AI 전략 리포트"])
 
     with tab1:
-        # 일별 매출 요약 데이터 가져오기
-        sales_data = get_api(f"/order/store/{store_id}/daily_sales")
+        # [Optimize] 매출 데이터 Session State 캐싱 (반복 호출 방지)
+        cache_key_sales = f"cached_sales_{store_id}"
+        if cache_key_sales not in st.session_state:
+             st.session_state[cache_key_sales] = get_api(f"/order/store/{store_id}/daily_sales")
+        
+        sales_data = st.session_state[cache_key_sales]
 
         if sales_data:
             df_sales = pd.DataFrame(sales_data)
@@ -96,8 +100,12 @@ def show_sales_dialog(store_id, store_name):
 
             st.divider()
 
-            # 2. 날짜별 상세 내역
-            orders_data = get_api(f"/order/store/{store_id}")
+            # 2. 날짜별 상세 내역 (주문 목록 캐싱)
+            cache_key_orders = f"cached_orders_{store_id}"
+            if cache_key_orders not in st.session_state:
+                st.session_state[cache_key_orders] = get_api(f"/order/store/{store_id}")
+            
+            orders_data = st.session_state[cache_key_orders]
             if orders_data:
                 df_orders = pd.DataFrame(orders_data)
                 df_orders['ordered_at'] = pd.to_datetime(
@@ -205,27 +213,44 @@ def show_sales_dialog(store_id, store_name):
             )
             report_target_date = week_options[selected_label]
             
-        # 최신 리포트 불러오기 (혹은 선택된 날짜의 리포트 조회가 필요하다면 API 수정 필요하지만, 일단 최신 조회 유지)
-        # TODO: 리포트 조회 API도 target_date를 받으면 좋음. 지금은 생성만 target_date 지원.
-        report_data = get_api(f"/report/latest/{store_id}")
+        # [Refactor] 완전한 On-Demand 방식 (초기 로딩 X, 버튼 클릭 시에만 생성/조회)
+        state_key_report = f"report_data_{store_id}"
+        state_key_date = f"last_target_date_{store_id}"
+        
+        # 1. 날짜 변경 감지 -> 리포트 초기화
+        # (사용자가 주차를 바꾸면 기존 리포트는 의미가 없으므로 화면에서 즉시 제거)
+        current_loaded_date = st.session_state.get(state_key_date)
+        
+        if current_loaded_date != str(report_target_date):
+            st.session_state[state_key_report] = None
+            st.session_state[state_key_date] = str(report_target_date)
+            # 로그도 함께 초기화
+            st.session_state.pop(f"last_logs_{store_id}", None)
+            
+        # 2. Session State에서 데이터 로드 (없으면 None -> 버튼만 보임)
+        report_data = st.session_state.get(state_key_report)
 
         col_btn1, col_btn2 = st.columns([1, 2])
         if col_btn1.button("✨ 선택 기간 리포트 생성", key=f"gen_report_{store_id}"):
             with st.spinner(f"AI가 {report_target_date} 기준 데이터를 분석 중입니다..."):
-                import requests
-                from api_utils import API_BASE_URL
+                from api_utils import post_api
                 
-                params = {
-                    "store_name": store_name, 
-                    "mode": "sequential",
-                    "target_date": report_target_date # [NEW] 선택된 날짜 전달
+                # Payload 생성
+                payload = {
+                     "store_id": int(store_id), # [Fix] int64 -> int 변환 (JSON 직렬화 오류 방지)
+                     "store_name": store_name,
+                     "target_date": report_target_date
                 }
                 
-                resp = requests.post(
-                    f"{API_BASE_URL}/report/generate/{store_id}", params=params)
-
-                if resp.status_code == 200:
-                    result = resp.json()
+                # 생성 요청 (백엔드에서 캐시 체크 함)
+                # post_api 내부에서 API_BASE_URL 처리됨
+                result = post_api("/report/generate", payload)
+                
+                if result: 
+                    # 성공 시 State 업데이트
+                    st.session_state[f"last_logs_{store_id}"] = result.get("logs", [])
+                    st.session_state[state_key_report] = result.get("report")
+                    report_data = result.get("report")
                     
                     # 캐시/생성 성공 메시지
                     if result.get("cached"):
@@ -239,10 +264,6 @@ def show_sales_dialog(store_id, store_name):
                         with st.expander("📜 AI 실행 로그 확인", expanded=True):
                             for log in result["logs"]:
                                 st.code(log)
-
-                    st.session_state[f"last_logs_{store_id}"] = result.get("logs", [])
-                    # 바로 보여주기 위해 변수 업데이트
-                    report_data = result.get("report") 
                 else:
                     st.error("리포트 생성에 실패했습니다.")
 
