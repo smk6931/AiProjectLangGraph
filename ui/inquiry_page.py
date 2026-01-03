@@ -132,13 +132,21 @@ def display_ai_message(message_content):
                 if x_col not in df.columns: x_col = df.columns[0]
                 if y_col not in df.columns and len(df.columns) > 1: y_col = df.columns[1]
 
-                # Altair Chart
-                chart = alt.Chart(df).mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5).encode(
+                # Altair Chart (Dynamic Coloring)
+                base = alt.Chart(df).mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5).encode(
                     x=alt.X(f'{x_col}:O', title=x_col.upper(), axis=alt.Axis(labelAngle=0)),
                     y=alt.Y(f'{y_col}:Q', title=y_col.upper()),
-                    tooltip=[x_col, y_col],
-                    color=alt.value("#4facfe")
-                ).properties(height=300)
+                    tooltip=list(df.columns)
+                )
+
+                if "store" in df.columns:
+                    # 지점별 비교 시 색상 구분 (Legend 자동 생성)
+                    chart = base.encode(color=alt.Color("store:N", title="지점"))
+                else:
+                    # 단일 지점 시 단색
+                    chart = base.encode(color=alt.value("#4facfe"))
+                
+                chart = chart.properties(height=300)
                 st.altair_chart(chart, use_container_width=True)
 
         # (3) Text Content

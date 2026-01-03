@@ -119,7 +119,7 @@ AWS_EC2 = ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_
 python -m uvicorn main:app --host 0.0.0.0 --port 8080
 
 python -m uvicorn main:app --reload --port 8080
-streamlit run /ui/dashboard.py
+streamlit run ui/main_ui.py
 
 ./venv/scripts/activate
 
