@@ -24,6 +24,7 @@ async def get_latest_report(store_id: int):
     if not report:
         return None
     return report
+
 @router.delete("/reset/{store_id}")
 async def delete_reports(store_id: int):
     """

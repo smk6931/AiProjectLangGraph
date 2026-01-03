@@ -8,7 +8,7 @@ from app.order.order_service import select_daily_sales_by_store
 from app.review.review_service import select_reviews_by_store
 from app.core.cache import get_report_cache, set_report_cache, get_report_object_cache
 
-from app.report.report_graph import create_report_graph
+from app.report.report_graph import report_graph_app
 
 
 async def generate_ai_store_report(store_id: int, store_name: str, mode: str = "sequential", target_date: str = None):
@@ -21,24 +21,31 @@ async def generate_ai_store_report(store_id: int, store_name: str, mode: str = "
 
         today = date.today()
 
-        # 1. 캐시 확인 (target_date가 없을 때만)
-        # if not target_date:
-        #     cached_report = await get_report_cache(store_id, today)
-        #     if cached_report:
-        #         cached_report["mode"] = mode
-        #         return cached_report
+        # 1. [선조회] 이미 오늘 생성된 리포트가 있는지 확인 (DB 체크)
+        # target_date가 없거나, 오늘 날짜를 요청한 경우
+        if not target_date or target_date == str(today):
+            existing_report = await select_latest_report(store_id)
+            
+            # DB에 있고, 그 날짜가 오늘이라면 -> AI 실행 없이 바로 리턴 (비용 절감)
+            if existing_report and str(existing_report['report_date']) == str(today):
+                print(f"♻️ [Service] '{store_name}' 오늘자 리포트 발견! AI 실행 생략.")
+                return {
+                    "report": existing_report,
+                    "logs": ["✅ [Cache] 이미 생성된 리포트를 반환합니다. (DB)"],
+                    "mode": mode,
+                    "cached": True
+                }
 
         # 2. 리포트 생성
         initial_state = {
             "store_id": store_id,
             "store_name": store_name,
             "target_date": target_date, # [NEW] 분석 대상 날짜
-            "messages": [],
             "execution_logs": []
         }
 
-        # LangGraph 실행 (순차적 그래프 고정)
-        final_state = await create_report_graph().ainvoke(initial_state)
+        # LangGraph 실행 (미리 컴파일된 싱글톤 앱 사용)
+        final_state = await report_graph_app.ainvoke(initial_state)
 
         # DB에서 저장된 리포트 조회
         report = await select_latest_report(store_id)

@@ -307,3 +307,6 @@ def create_report_graph():
     workflow.add_edge("save_report", END)
 
     return workflow.compile()
+
+# [Singleton 패턴] 서버 시작 시 한 번만 컴파일하여 재사용
+report_graph_app = create_report_graph()
