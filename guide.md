@@ -112,6 +112,9 @@ streamlit run ui/main_ui.py
 ## AWS RDS 연결
 ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -N -L 5433:database-aws.cpusiq4esjqv.ap-northeast-2.rds.amazonaws.com:5432 ubuntu@15.164.230.250 -o ServerAliveInterval=60
 
+## AWS Redis 연결
+ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -N -L 6379:localhost:6379 ubuntu@15.164.230.250 -o ServerAliveInterval=60
+
 ## RC2 터미널 접속
 AWS_EC2 = ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" ubuntu@15.164.230.250
 
@@ -152,3 +155,12 @@ FireCrawl사용 크롤링??
 ```bash
 # 로컬(Windows) -> 서버(AWS Ubuntu) 파일 전송
 scp -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -r . ubuntu@15.164.230.250:/home/ubuntu/AiProjectLangGraph/
+
+# 1. Redis 설치
+sudo apt update
+sudo apt install redis-server -y
+# 2. Redis 설정 변경 (외부 접속 허용은 위험하니 로컬만 허용 - 기본값 유지)
+# sudo nano /etc/redis/redis.conf  # (필요시 'supervised systemd'로 변경)
+# 3. 서비스 시작 및 상태 확인
+sudo systemctl restart redis.service
+sudo systemctl status redis

@@ -35,10 +35,22 @@ async def delete_reports(store_id: int):
     from app.report.report_schema import StoreReport
     
     try:
+        # 1. DB 삭제
         with SessionLocal() as session:
             # 해당 지점 리포트 전체 삭제
             session.query(StoreReport).filter(StoreReport.store_id == store_id).delete()
             session.commit()
+            
+        # 2. Redis 캐시 삭제 (동기화)
+        from app.core.cache import get_redis
+        client = await get_redis()
+        if client:
+            # 해당 store_id의 모든 리포트 키 스캔
+            keys = await client.keys(f"report:{store_id}:*")
+            if keys:
+                await client.delete(*keys)
+                print(f"🗑️ [Redis] {store_id}번 지점 관련 캐시 {len(keys)}개 삭제 완료")
+
         return {"status": "success", "message": f"{store_id}번 지점 리포트 초기화 완료"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

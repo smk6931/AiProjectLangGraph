@@ -226,8 +226,7 @@ async def analyze_data_node(state: ReportState):
     </SECTION:IMPROVEMENT>
 
     <SECTION:RISK>
-    // Must be valid JSON string. NO trailing commas! Use double quotes.
-    {{"risk_score": 80, "main_risks": ["리스크1", "리스크2"], "suggestion": "긴급 제언"}}
+    {{"risk_score": 80, "main_risks": ["리스크예시1", "리스크예시2"], "suggestion": "개선방안"}}
     </SECTION:RISK>
     """
 
@@ -325,6 +324,16 @@ async def save_report_node(state: ReportState):
         operational_improvement=report_dict['operational_improvement'],
         risk_assessment=risk_info
     )
+
+    # Risk 점수가 0이면 파싱 실패로 간주 -> DB 저장 건너뛰기 (재시도 유도)
+    risk_score_val = risk_info.get('risk_score') if isinstance(risk_info, dict) else 0
+    
+    # [Prevent Saving Bad Data] 
+    # 파싱 실패(0)거나 필수 필드가 없으면 저장하지 않음.
+    if not risk_score_val or risk_score_val == 0:
+        return {
+             "execution_logs": [log, "⚠️ [Skip Save] 불완전한 리포트(Risk Parsing Fail)로 인해 DB 저장을 생략합니다."]
+        }
 
     with SessionLocal() as session:
         session.query(StoreReport).filter_by(
