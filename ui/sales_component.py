@@ -318,7 +318,7 @@ def show_sales_dialog(store_id, store_name):
                     with st.expander("📝 Raw Data Analysis (Source)", expanded=False):
                         st.write("AI가 분석의 근거로 활용한 세부 데이터를 확인하세요.")
                         
-                        t1, t2, t3 = st.tabs(["📊 매출/날씨 통합", "🍔 메뉴별 분석", "📅 요일/시간 분석"])
+                        t1, t2 = st.tabs(["📊 매출/날씨 통합", "🍔 메뉴별 분석"])
                         
                         with t1:
                             st.write("**[최근 7일 매출 및 기상 상황]**")
@@ -351,18 +351,6 @@ def show_sales_dialog(store_id, store_name):
                                         st.dataframe(df_worst[["menu", "change_pct", "prev_rev"]].rename(columns={"menu":"메뉴","change_pct":"하락%","prev_rev":"이전매출"}), hide_index=True)
                                     else:
                                         st.write("- 데이터 없음 -")
-
-                        with t3:
-                            st.write("**[평일 vs 주말 매출 변동]**")
-                            if "day_analysis" in source_data:
-                                df_day = pd.DataFrame(source_data["day_analysis"])
-                                if not df_day.empty:
-                                    # 보기 좋게 전처리
-                                    df_day = df_day[["type", "recent", "prev", "trend"]]
-                                    df_day.columns = ["구분", "최근매출", "이전매출", "변동률(%)"]
-                                    st.dataframe(df_day, hide_index=True, use_container_width=True)
-                            else:
-                                st.info("요일별 분석 데이터가 없습니다.")
                 # --------------------------------------------------
 
                 if evidence:

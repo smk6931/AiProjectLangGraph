@@ -24,8 +24,10 @@ class ReportState(TypedDict):
     prev_sales_data: List[Dict[str, Any]] # 지난주 매출 (그 전 7일)
     reviews_data: List[Dict[str, Any]]
     menu_sales_data: List[Dict[str, Any]]
-    day_sales_data: List[Dict[str, Any]]
     weather_data: Dict[str, str]
+    # [NEW] 집계 정합성을 위해 fetch 단계에서 계산한 값을 넘김
+    calculated_total_sales: float 
+    calculated_prev_sales: float
     final_report: Dict[str, Any]
     execution_logs: Annotated[List[str], append_logs]
 
@@ -63,7 +65,7 @@ async def fetch_data_node(state: ReportState):
     # 2. 데이터 조회
     # 메뉴별, 요일별 통계는 기준 날짜를 넘겨서 DB에서 정확히 계산
     menu_stats = await select_menu_sales_comparison(store_id, days=7, target_date=target_date_str)
-    day_stats = await select_sales_by_day_type(store_id, days=7, target_date=target_date_str)
+    # day_stats = await select_sales_by_day_type(store_id, days=7, target_date=target_date_str) # [삭제] DB 호출 대신 직접 집계
     reviews = await select_reviews_by_store(store_id) # 리뷰는 전체 가져와서 최신순 (TODO: 날짜 필터링?)
 
     # 일별 매출은 전체를 가져온 뒤 파이썬에서 날짜 필터링 (DB 호출 횟수 절약)
@@ -80,13 +82,30 @@ async def fetch_data_node(state: ReportState):
     
     target_sales = []
     prev_sales = []
+
+    # [NEW] 파이썬 내보내기 집계 (평일/주말 정합성 보장)
+    weekday_sales = {"recent": 0, "prev": 0}
+    weekend_sales = {"recent": 0, "prev": 0}
     
     for s in all_sales:
         s_date = s['order_date'] # date object
+        rev = float(s['daily_revenue'])
+
+        # 이번주 데이터
         if curr_start <= s_date <= curr_end:
             target_sales.append(s)
+            if s_date.weekday() < 5: # 0~4: 평일
+                weekday_sales["recent"] += rev
+            else: # 5~6: 주말
+                weekend_sales["recent"] += rev
+
+        # 지난주 데이터
         elif prev_start <= s_date <= prev_end:
             prev_sales.append(s)
+            if s_date.weekday() < 5:
+                weekday_sales["prev"] += rev
+            else:
+                weekend_sales["prev"] += rev
             
     # 정렬 (날짜 오름차순) -> 그래프용
     target_sales.sort(key=lambda x: x['order_date'])
@@ -100,10 +119,11 @@ async def fetch_data_node(state: ReportState):
         "prev_sales_data": prev_sales,
         "reviews_data": reviews[:15], # 최신 15개만 사용
         "menu_sales_data": menu_stats,
-        "day_sales_data": day_stats,
         "weather_data": weather_map,
+        "calculated_total_sales": weekday_sales["recent"] + weekend_sales["recent"], # [NEW] 정확한 합계 전달
+        "calculated_prev_sales": weekday_sales["prev"] + weekend_sales["prev"],
         "target_date": target_date_str, # State 업데이트
-        "execution_logs": [log, f"✅ [Fetch] 데이터 수집 완료 (기준일: {target_date_str}, 이번주 {len(target_sales)}일, 지난주 {len(prev_sales)}일)"]
+        "execution_logs": [log, f"✅ [Fetch] 데이터 수집 및 정합성 검증 완료 (기준일: {target_date_str})"]
     }
 
 async def analyze_data_node(state: ReportState):
@@ -115,11 +135,11 @@ async def analyze_data_node(state: ReportState):
     prev_sales = state.get("prev_sales_data", []) # 지난주
     reviews = state["reviews_data"]
     menu_stats = state.get("menu_sales_data", [])
-    day_stats = state.get("day_sales_data", [])
     
     # 1. 주간 매출 비교 (Weekly Comparison)
-    this_week_total = sum(float(s['daily_revenue']) for s in sales)
-    prev_week_total = sum(float(s['daily_revenue']) for s in prev_sales) if prev_sales else 0
+    # [변경] fetch 단계에서 계산된 정확한 합계 사용 (재계산 X)
+    this_week_total = state["calculated_total_sales"]
+    prev_week_total = state.get("calculated_prev_sales", 0)
     
     avg_rev = this_week_total / len(sales) if sales else 0
     
@@ -154,19 +174,6 @@ async def analyze_data_node(state: ReportState):
     dropping_candidates = [m for m in processed_menus if m['prev_rev'] > 0]
     worst_dropping = sorted(dropping_candidates, key=lambda x: x['change_pct'])[:5]
 
-    # 요일별(평일/주말) 분석
-    day_analysis = []
-    for d in day_stats:
-        r_rev = float(d['recent_revenue'])
-        p_rev = float(d['prev_revenue'])
-        d_trend = ((r_rev - p_rev) / p_rev * 100) if p_rev > 0 else 0
-        day_analysis.append({
-            "type": d['day_type'],
-            "recent": r_rev,
-            "prev": p_rev,
-            "trend": round(d_trend, 1)
-        })
-
     # UI용 원본 데이터 요약 (날짜, 매출만) + 날씨 추가
     source_sales = []
     for s in sales:
@@ -194,14 +201,12 @@ async def analyze_data_node(state: ReportState):
     잘 팔린 메뉴 (TOP 5): {json.dumps(top_selling, ensure_ascii=False)}
     급감한 메뉴 (WORST 5): {json.dumps(worst_dropping, ensure_ascii=False)}
 
-    [요일/시간 분석]
-    평일 vs 주말 매출 변동: {json.dumps(day_analysis, ensure_ascii=False)}
-
     분석 시 다음 사항을 반드시 지켜줘:
     1. **"이번주 매출이 지난주 대비 왜 변했는가?"**를 핵심 주제로 잡으세요. (성장 또는 하락의 원인 규명)
     2. **날씨와 매출의 상관관계**를 반드시 언급하세요. 
        - "지난주 대비 비오는 날이 많아 배달 매출이 늘었다" 등 구체적으로.
     3. 수치적 근거(Top 5 메뉴명, 주말 매출 변동률 등)를 포함하여 마크다운 표로 시각화하세요.
+    4. 모든 줄바꿈(개행)은 실제 줄바꿈 대신 '\\n' 문자를 사용하세요. (JSON 포맷 준수)
     
     응답은 반드시 아래 JSON 형식으로만 할 것:
     {{
@@ -225,22 +230,35 @@ async def analyze_data_node(state: ReportState):
         
     # 2. 제어 문자(Control Characters) 제거 (JSON 파싱 에러 방지)
     import re
-    cleaned_json = re.sub(r'[\x00-\x1F\x7F]', '', raw_text)
+    # \n(\x0A), \t(\x09), \r(\x0D)은 살리고 그 외의 제어 문자만 제거 (마크다운 표 보존)
+    cleaned_json = re.sub(r'[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]', '', raw_text)
+    
+    # [NEW] Trailing Comma 제거 (Standard JSON 호환성 확보)
+    # 예: {"a": 1,} -> {"a": 1}
+    cleaned_json = re.sub(r',\s*([}\]])', r'\1', cleaned_json)
     
     try:
-        # strict=False 옵션으로 유연하게 파싱
+        # dirtyjson 대신 표준 json 사용 + 정규식 전처리
         report_dict = json.loads(cleaned_json, strict=False)
-    except json.JSONDecodeError as e:
-        print(f"❌ [Analyze] JSON 파싱 실패: {e}")
-        print(f"   (Raw Text): {raw_text[:200]}...") # 디버깅용 로그
-        # Fallback: 기본 빈 템플릿 반환
-        report_dict = {
-            "data_evidence": {"sales_analysis": "데이터 분석 실패"},
-            "summary": "리포트 생성 중 오류가 발생했습니다.",
-            "marketing_strategy": "",
-            "operational_improvement": "",
-            "risk_assessment": {"risk_score": 0, "main_risks": [], "suggestion": ""}
-        }
+    except Exception:
+        try:
+            # 2차 시도: 역슬래시 이중 치환 후 재시도
+            cleaned_json_fixed = cleaned_json.replace('\\', '\\\\')
+            report_dict = json.loads(cleaned_json_fixed, strict=False)
+        except Exception as e:
+            print(f"❌ [Analyze] JSON 파싱 최종 실패: {e}")
+            print("--- [AI Raw Output Start] ---")
+            print(raw_text) # 전체 출력 (디버깅용)
+            print("--- [AI Raw Output End] ---")
+            
+            # Fallback: 기본 빈 템플릿 반환
+            report_dict = {
+                "data_evidence": {"sales_analysis": "데이터 분석 실패 (AI 응답 형식 오류)"},
+                "summary": "리포트 생성 중 오류가 발생했습니다.",
+                "marketing_strategy": "",
+                "operational_improvement": "",
+                "risk_assessment": {"risk_score": 0, "main_risks": [], "suggestion": ""}
+            }
     
     # UI용 통계 데이터 및 소스 데이터 추가
     report_dict["metrics"] = {
@@ -255,7 +273,6 @@ async def analyze_data_node(state: ReportState):
         "review_count": len(reviews),
         "top_selling_menus": top_selling,
         "worst_dropping_menus": worst_dropping,
-        "day_analysis": day_analysis
     }
 
     return {
