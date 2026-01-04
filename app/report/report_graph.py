@@ -9,6 +9,9 @@ from app.review.review_service import select_reviews_by_store
 from app.clients.genai import genai_generate_text
 from app.clients.weather import fetch_weather_data
 
+from app.core.db import fetch_all
+from datetime import datetime, timedelta
+
 from langgraph.graph.message import add_messages
 
 # 리스트를 덮어쓰지 않고 추가하기 위한 리듀서 함수
@@ -31,9 +34,6 @@ class ReportState(TypedDict):
     final_report: Dict[str, Any]
     execution_logs: Annotated[List[str], append_logs]
 
-async def fetch_store_data(store_id: int):
-    pass
-
 async def fetch_data_node(state: ReportState):
     """DB에서 매출과 리뷰 데이터를 수집하는 노드"""
     store_id = state["store_id"]
@@ -42,16 +42,17 @@ async def fetch_data_node(state: ReportState):
 
     # 1. 기준 날짜(Anchor Date) 결정
     # 시연 모드 or 과거 날짜 조회 지원
-    from app.core.db import fetch_all
-    from datetime import datetime, timedelta
-    
     target_date_str = state.get("target_date")
     
+
     if not target_date_str:
         # 타겟 날짜가 없으면 DB 최신 날짜 조회 (Simulation Mode)
-        max_date_query = f"SELECT MAX(sale_date) as last_date FROM sales_daily WHERE store_id = {store_id}"
         try:
-            max_date_rows = await fetch_all(max_date_query)
+            max_date_rows = await fetch_all(f"""
+                SELECT MAX(sale_date) as last_date 
+                FROM sales_daily 
+                WHERE store_id = {store_id}
+            """)
             if max_date_rows and max_date_rows[0]['last_date']:
                 target_date_str = str(max_date_rows[0]['last_date'])
                 log += f"\n🕒 최신 데이터 날짜 기준: {target_date_str}"
@@ -59,6 +60,7 @@ async def fetch_data_node(state: ReportState):
                 target_date_str = str(date.today())
         except:
             target_date_str = str(date.today())
+
 
     ref_date = datetime.strptime(target_date_str, "%Y-%m-%d").date()
     

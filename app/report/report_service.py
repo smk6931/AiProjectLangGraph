@@ -1,6 +1,8 @@
 import json
 import asyncio
 import time
+import traceback
+
 from datetime import date, datetime, timedelta
 from sqlalchemy import func
 from app.core.db import SessionLocal, fetch_all
@@ -9,7 +11,6 @@ from app.clients.genai import genai_generate_text
 from app.order.order_service import select_daily_sales_by_store
 from app.review.review_service import select_reviews_by_store
 from app.core.cache import get_report_cache, set_report_cache, get_report_object_cache
-
 from app.report.report_graph import report_graph_app
 
 
@@ -138,7 +139,6 @@ async def generate_ai_store_report(store_id: int, store_name: str, mode: str = "
 
     except Exception as e:
         print(f"❌ [Service] 에러 발생: {str(e)}")
-        import traceback
         traceback.print_exc()
         return None
 

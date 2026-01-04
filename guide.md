@@ -100,21 +100,24 @@ python scripts/seed_reviews_monthly.py
 
 ### 4. 서버 실행 (Run Server)
 ```bash
+
+
 # 1. Backend API Server (FastAPI)
 python -m uvicorn main:app --reload --port 8080
-
 # 2. Frontend UI (Streamlit)
 streamlit run ui/main_ui.py
-```
 
----
+# Server 백엔드 프론트 띄우기
+nohup python -m uvicorn main:app --host 0.0.0.0 --port 8080 > server.log 2>&1 &
+
+nohup streamlit run ui/main_ui.py --server.port 8501 --server.address 0.0.0.0 > ui.log 2>&1 &
 
 ## AWS RDS 연결
 ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -N -L 5433:database-aws.cpusiq4esjqv.ap-northeast-2.rds.amazonaws.com:5432 ubuntu@15.164.230.250 -o ServerAliveInterval=60
 
 ## AWS Redis 연결
 ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -N -L 6379:localhost:6379 ubuntu@15.164.230.250 -o ServerAliveInterval=60
-
+      
 ## RC2 터미널 접속
 AWS_EC2 = ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" ubuntu@15.164.230.250
 
@@ -164,3 +167,25 @@ sudo apt install redis-server -y
 # 3. 서비스 시작 및 상태 확인
 sudo systemctl restart redis.service
 sudo systemctl status redis
+
+. 🐍 Backend (FastAPI) 로그 보기
+API 요청 들어오는 거나 에러 터지는 거 보고 싶을 때:
+
+bash
+tail -f server.log
+2. 🎨 Frontend (Streamlit) 로그 보기
+누가 페이지 접속했는지 보고 싶을 때:
+
+bash
+tail -f ui.log
+3. 👀 두 개 동시에 보기 (짬뽕 모드)
+화면이 좀 정신없을 수 있지만, 둘 다 한 번에 보고 싶으면:
+
+bash
+tail -f server.log ui.log
+
+
+DB_HOST=database-aws.cpusiq4esjqv.ap-northeast-2.rds.amazonaws.com
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=postgres
