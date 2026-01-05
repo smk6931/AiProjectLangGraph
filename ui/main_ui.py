@@ -41,13 +41,14 @@ if "user_email" in st.session_state:
         
         st.divider()
 
-        # 페이지 이름과 내부 키 매핑 (이모티콘 제거)
+        # 페이지 이름과 내부 키 매핑
         nav_options = {
             "AI 매니저 (Main)": "inquiry_page", 
             "총매출/AI 분석": "dashboard",
             "메뉴 조회": "menu_page",
             "리뷰 관리": "review_page",
-            "매뉴얼 & 규정": "guide_page"   
+            "매뉴얼 & 규정": "guide_page",
+            # "👨‍💻 개발자 노트 (Portfolio)": "portfolio_page"
         }
 
         # 현재 페이지의 index 찾기
@@ -69,7 +70,7 @@ if "user_email" in st.session_state:
             index=current_idx,
             label_visibility="collapsed"
         )
-
+        
         st.session_state.page = nav_options[selection]
 
         # st.divider()
@@ -102,3 +103,7 @@ elif st.session_state.page == "review_page":
 
 elif st.session_state.page == "guide_page":
     guide_page()
+
+# elif st.session_state.page == "portfolio_page":
+#     from portfolio_page import render_portfolio_page
+#     render_portfolio_page()
