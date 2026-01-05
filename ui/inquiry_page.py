@@ -18,13 +18,13 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8080")
 # ==============================================================================
 # [UI Component 1] LangGraph 아키텍처 다이어그램 (Expander)
 # ==============================================================================
-def show_langgraph_architecture():
-    with st.expander("AI Agent 아키텍처 (Processing Flow)", expanded=False):
-        st.markdown("""
-        <div style="text-align: center; color: #8B949E; margin-bottom: 10px;">
-            User Intent Analysis ➔ Route Optimization ➔ Specialized Retrieval ➔ Synthesis
-        </div>
-        """, unsafe_allow_html=True)
+# def show_langgraph_architecture():
+#     with st.expander("AI Agent 아키텍처 (Processing Flow)", expanded=False):
+#         st.markdown("""
+#         <div style="text-align: center; color: #8B949E; margin-bottom: 10px;">
+#             User Intent Analysis ➔ Route Optimization ➔ Specialized Retrieval ➔ Synthesis
+#         </div>
+#         """, unsafe_allow_html=True)
 
 # ... (중략) ...
 
@@ -197,7 +197,7 @@ def inquiry_page():
     st.caption("LLM & LangGraph 기반 지능형 매장 운영 지원 시스템")
     
     # 3. Top Components
-    show_langgraph_architecture()
+    # show_langgraph_architecture()
     show_sample_prompts()
     show_recent_logs()
     

@@ -109,4 +109,13 @@ def dashboard_page():
                 st.session_state.selected_store_idx = int(point_index) # 안전하게 int 변환
                 st.rerun()
 
+    # 5️⃣ [Auto-Open] 페이지 진입 시 자동으로 상세 다이얼로그 띄우기 (Showcase Mode)
+    # 다른 탭에 갔다가 돌아왔을 때도 뜨게 하려면 session_state 로직이 더 복잡해지므로,
+    # 여기서는 '최초 진입' 혹은 '새로고침' 시에만 뜨도록 처리.
+    if "dashboard_popup_shown" not in st.session_state:
+        st.session_state.dashboard_popup_shown = True
+        # 현재 선택된 매장 정보로 다이얼로그 오픈
+        current_store_row = stores.iloc[st.session_state.selected_store_idx]
+        show_sales_dialog(current_store_row['store_id'], current_store_row['store_name'])
+
     st.divider()

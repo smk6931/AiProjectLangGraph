@@ -19,7 +19,7 @@ def show_sales_dialog(store_id, store_name):
     st.divider()
 
     # 상단 탭 구성
-    tab1, tab2 = st.tabs(["📊 매출 현황", "🤖 AI 전략 리포트"])
+    tab2, tab1  = st.tabs(["AI 전략 리포트", "매출 현황"])
 
     with tab1:
         # [Optimize] 매출 데이터 Session State 캐싱 (반복 호출 방지)
