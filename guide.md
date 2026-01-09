@@ -107,9 +107,11 @@ python -m uvicorn main:app --reload --port 8080
 # 2. Frontend UI (Streamlit)
 streamlit run ui/main_ui.py
 
-# Server 백엔드 프론트 띄우기
-nohup python -m uvicorn main:app --host 0.0.0.0 --port 8080 > server.log 2>&1 &
-
+pkill -f uvicorn
+pkill -f streamlit
+# 2. 백엔드 시작 (Backend Start)
+nohup python -m uvicorn main:app --host 0.0.0.0 --port 8080 --reload > server.log 2>&1 &
+# 3. 프론트엔드 시작 (Frontend Start)
 nohup streamlit run ui/main_ui.py --server.port 8501 --server.address 0.0.0.0 > ui.log 2>&1 &
 
 ## AWS RDS 연결
@@ -132,6 +134,17 @@ python -m uvicorn main:app --reload --port 8080
 streamlit run ui/main_ui.py
 
 ./venv/scripts/activate
+
+scp -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" `
+    -r "c:\GitHub\AiProjectLangGraph\app" `
+    ubuntu@15.164.230.250:/home/ubuntu/AiProjectLangGraph/
+
+scp -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" `
+    -r "c:\GitHub\AiProjectLangGraph\ui" `
+    ubuntu@15.164.230.250:/home/ubuntu/AiProjectLangGraph/
+
+scp -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -r . ubuntu@15.164.230.250:/home/ubuntu/AiProjectLangGraph/
+
 
 
 
