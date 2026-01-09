@@ -28,3 +28,28 @@ def perform_async_logging(func):
             print(f"🏁 [End] {func_name} (⏱️ {duration:.3f}s)")
             
     return wrapper
+
+# def perform_async_logging(func):
+#     @functools.wraps(func)
+#     async def wrapper(*args, **kwargs):
+#         start = time.perf_counter()
+#         logger.info(f"[Start] {func.__name__}")
+#         try:
+#             return await func(*args, **kwargs)
+#         except Exception as e:
+#             logger.error(f"[Error] {func.__name__}: {e}", exc_info=True)
+#             raise       finally:
+#             duration = time.perf_counter() - start
+#             logger.info(f"[End] {func.__name__} (⏱️ {duration:.3f}s)")           
+#     return wrapper
+
+
+def perform_async_logging(func): # Monitoring Utility Example
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):  
+        logger.info(f"Start: {func.__name__}")
+        try:
+            return await func(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Error: {e}") 
+            raise # Re-throw for upper layer handling

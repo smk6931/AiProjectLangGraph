@@ -32,7 +32,7 @@ base = declarative_base()
 # 새 모델이 생기면 아래에 추가하세요.
 
 from app.menu.menu_schema import Menu  # noqa: F401
-from app.user.user_schema import User  # noqa: F401
+# from app.user.user_schema import User  # noqa: F401
 from app.store.store_schema import Store  # noqa: F401
 from app.review.review_schema import Review  # noqa: F401
 from app.order.order_schema import Order  # noqa: F401

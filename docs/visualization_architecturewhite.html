@@ -1,0 +1,214 @@
+<!-- file:///C:/GitHub/AiProjectLangGraph/docs/visualization_architecturewhite.html -->
+
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Dynamic Visualization Architecture</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;800&display=swap');
+
+        body {
+            font-family: 'Pretendard', sans-serif;
+            background-color: #ffffff;
+            /* White Background */
+            color: #1a1a1a;
+            margin: 0;
+            padding: 40px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .slide-container {
+            width: 1400px;
+            background-color: #ffffff;
+            border: 1px solid #e0e0e0;
+            border-radius: 0;
+            padding: 50px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #000000;
+            font-size: 2.8em;
+            margin-bottom: 10px;
+            border-bottom: 4px solid #000000;
+            padding-bottom: 20px;
+            letter-spacing: -1px;
+        }
+
+        .subtitle {
+            font-size: 1.4em;
+            color: #555555;
+            margin-bottom: 50px;
+            font-weight: 600;
+        }
+
+        .content-wrapper {
+            display: flex;
+            gap: 50px;
+        }
+
+        .diagram-section {
+            flex: 2;
+            background: #f8f9fa;
+            padding: 30px;
+            border-radius: 12px;
+            border: 1px solid #ddd;
+        }
+
+        .text-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 25px;
+        }
+
+        .box {
+            background-color: #f1f3f5;
+            padding: 25px;
+            border-radius: 8px;
+            border-left: 6px solid;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+        }
+
+        .box.inquiry {
+            border-color: #0052cc;
+            background-color: #e6f0ff;
+        }
+
+        /* Blue */
+        .box.report {
+            border-color: #00994f;
+            background-color: #e6fcf0;
+        }
+
+        /* Green */
+
+        h3 {
+            margin-top: 0;
+            color: #111;
+            font-weight: 800;
+        }
+
+        p,
+        li {
+            line-height: 1.6;
+            color: #333;
+        }
+
+        code {
+            background-color: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-weight: 600;
+            color: #d6336c;
+        }
+
+        .highlight {
+            color: #0052cc;
+            font-weight: 800;
+        }
+
+        /* Mermaid Style override */
+        .mermaid {
+            display: flex;
+            justify-content: center;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="slide-container">
+        <h1>시스템 아키텍처: 동적 시각화 (Dynamic Visualization)</h1>
+        <div class="subtitle">데이터의 종류(Key)에 따라 차트, 도표, 리스트를 자동으로 선택하는 AI 렌더링 파이프라인</div>
+
+        <div class="content-wrapper">
+            <!-- Visualization -->
+            <div class="diagram-section">
+                <div class="mermaid">
+                    flowchart TD
+                    User["사용자 요청 (User Request)"] --> Check{"에이전트 타입?"}
+
+                    %% Track A: Inquiry Agent
+                    subgraph Track_Inquiry ["Track A: 실시간 질의 - Inquiry Agent"]
+                    direction TB
+                    Check -->|매출/메뉴 질문| Miner["데이터 조회 노드<br />(sales.py)"]
+                    Miner --> Decider{"데이터 Key 확인<br />(collected_data)"}
+
+                    %% Branch 1: Chart & Metrics
+                    Decider --"Key: daily_trend"--> Logic_Chart["[Backend] 차트/지표 가공"]
+                    Logic_Chart --> UI_Metric["📊 숫자 카드 (Metrics)"]
+                    Logic_Chart --> UI_Chart["📈 알테어 차트 (Sales Graph)"]
+
+                    %% Branch 2: Tables
+                    Decider --"Key: top/low_selling"--> AI_Writer["[AI Writer] 답변 생성<br />(answer.py)"]
+                    AI_Writer --> UI_Table["📋 마크다운 도표 (Table)<br />(Best/Worst 메뉴)"]
+
+                    %% Branch 3: Text Lists
+                    Decider --"Key: recent_reviews"--> AI_Writer
+                    AI_Writer --> UI_List["📝 텍스트 리스트 (List)<br />(최근 고객 리뷰)"]
+                    end
+
+                    %% Track B: Report Agent
+                    subgraph Track_Report ["Track B: 주간 리포트 - Report Agent"]
+                    direction TB
+                    Check -->|리포트 생성| Context["통계 데이터 집계<br />(WoW, 날씨, 메뉴)"]
+                    Context --> Prompt["시스템 프롬프트<br />(report_graph.py)"]
+
+                    Prompt -->|"지시: SECTION 태그 사용"| LLM_Gen["LLM 생성 (GPT-4o)"]
+                    LLM_Gen --> Final_MD["📝 마크다운 도표 강제 생성<br />(Sales Analysis Table)"]
+                    end
+
+                    UI_Metric -.-> View["사용자 화면 (View)"]
+                    UI_Chart -.-> View
+                    UI_Table -.-> View
+                    UI_List -.-> View
+                    Final_MD -.-> View
+
+                    %% Colors for Light Mode
+                    style Track_Inquiry fill:#f8f9fa,stroke:#0052cc,stroke-width:3px
+                    style Track_Report fill:#f8f9fa,stroke:#00994f,stroke-width:3px
+                    style View fill:#333,color:#fff,stroke:#000
+                    style Decider fill:#fff3cd,stroke:#ffc107,stroke-width:2px
+                </div>
+            </div>
+
+            <!-- Explanation -->
+            <div class="text-section">
+
+                <div class="box inquiry">
+                    <h3>Track A: 동적 UI (Inquiry)</h3>
+                    <p>데이터 키(Key)의 존재 여부가 UI 컴포넌트를 결정합니다.</p>
+                    <ul>
+                        <li><span class="highlight">Metric & Chart</span>: <code>daily_trend</code> 키가 감지되면 백엔드가 <strong>Altair 차트</strong>와 <strong>KPI 카드</strong>를 생성하여 상단에 배치합니다.</li>
+                        <li><span class="highlight">Table (표)</span>: <code>top_selling</code>, <code>low_selling</code> 데이터가 있으면 AI가 <strong>마크다운 표</strong>로 변환합니다.</li>
+                        <li><span class="highlight">Text (리스트)</span>: <code>recent_reviews</code> 데이터는 AI가 <strong>요약 텍스트 목록</strong>으로 답변합니다.</li>
+                    </ul>
+                </div>
+
+                <div class="box report">
+                    <h3>Track B: 정적 리포트 (Report)</h3>
+                    <p>리포트는 프롬프트 엔지니어링을 통해 고정된 포맷을 유지합니다.</p>
+                    <ul>
+                        <li><span class="highlight">Prompt Control</span>: <code>SECTION</code> 태그 내부에 <strong>"마크다운 표로 시각화하라"</strong>는 강력한 제약 조건을 부여합니다.</li>
+                        <li><strong>Benefit</strong>: UI 로직 변경 없이도 LLM 만으로 복잡한 레이아웃을 일관되게 생성합니다.</li>
+                    </ul>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({ startOnLoad: true, theme: 'neutral', securityLevel: 'loose' });
+    </script>
+
+</body>
+
+</html>

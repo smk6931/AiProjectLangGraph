@@ -7,7 +7,8 @@ from app.util.decorators import perform_async_logging
 
 load_dotenv()
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+api_key = os.getenv("GEMINI_API_KEY")
+client = genai.Client(api_key=api_key.strip() if api_key else None)
 
 @perform_async_logging
 async def genai_generate_text(prompt: str):

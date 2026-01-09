@@ -122,6 +122,7 @@ ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -
 AWS_EC2 = ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" ubuntu@15.164.230.250
 
 ## 서버 백엔드 서버 올리기
+fuser -k 8080/tcp
 python -m uvicorn main:app --host 0.0.0.0 --port 8080
 
 python -m uvicorn main:app --reload --port 8080
@@ -179,8 +180,8 @@ tail -f server.log
 bash
 tail -f ui.log
 3. 👀 두 개 동시에 보기 (짬뽕 모드)
-화면이 좀 정신없을 수 있지만, 둘 다 한 번에 보고 싶으면:
 
+화면이 좀 정신없을 수 있지만, 둘 다 한 번에 보고 싶으면:
 bash
 tail -f server.log ui.log
 

@@ -196,6 +196,25 @@ def apply_custom_styles():
                     color: #FFFFFF !important;
                     font-weight: 500 !important;
                 }
+                
+                /* [Mobile Fix] 강제 다크모드 적용 (Alert, Info 박스가 밝게 나오는 문제 해결) */
+                .stAlert {
+                    background-color: #1F242C !important;
+                    color: #E6EDF3 !important;
+                    border: 1px solid #30363D !important;
+                }
+                .stAlert p, .stAlert li {
+                    color: #E6EDF3 !important;
+                }
+            }
+            
+            /* [Global Fix] Alert Box (Info, Success) 다크 테마 강제 적용 */
+            div[data-baseweb="notification"], .stAlert {
+                background-color: #1F242C !important;
+                border: 1px solid #30363D !important;
+            }
+            div[data-baseweb="notification"] p, .stAlert p {
+                color: #E6EDF3 !important;
             }
         </style>
     """, unsafe_allow_html=True)

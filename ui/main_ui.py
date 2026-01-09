@@ -41,10 +41,23 @@ if "user_email" in st.session_state:
         
         st.divider()
 
+        # [UI Highlight] AI 기능 강조를 위한 CSS 주입 (사이드바 전용)
+        st.markdown("""
+        <style>
+            /* 사이드바 라디오 버튼의 1번, 2번 항목(AI 기능)만 색상/폰트 강조 */
+            [data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:nth-child(1) p,
+            [data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:nth-child(2) p {
+                color: #3399FF !important; /* Premium Blue */
+                font-weight: 800 !important;
+                font-size: 1.05rem !important;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+
         # 페이지 이름과 내부 키 매핑
         nav_options = {
-            "AI 매니저 (Main)": "inquiry_page", 
-            "총매출/AI 분석": "dashboard",
+            "AI 매니저 (Chat)": "inquiry_page", 
+            "AI 매출분석 (Report)": "dashboard",
             "메뉴 조회": "menu_page",
             "리뷰 관리": "review_page",
             "매뉴얼 & 규정": "guide_page",
