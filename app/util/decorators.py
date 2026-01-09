@@ -44,12 +44,12 @@ def perform_async_logging(func):
 #     return wrapper
 
 
-def perform_async_logging(func): # Monitoring Utility Example
-    @functools.wraps(func)
-    async def wrapper(*args, **kwargs):  
-        logger.info(f"Start: {func.__name__}")
-        try:
-            return await func(*args, **kwargs)
-        except Exception as e:
-            logger.error(f"Error: {e}") 
-            raise # Re-throw for upper layer handling
+# def perform_async_logging(func): # Monitoring Utility Example
+#     @functools.wraps(func)
+#     async def wrapper(*args, **kwargs):  
+#         logger.info(f"Start: {func.__name__}")
+#         try:
+#             return await func(*args, **kwargs)
+#         except Exception as e:
+#             logger.error(f"Error: {e}") 
+#             raise # Re-throw for upper layer handling

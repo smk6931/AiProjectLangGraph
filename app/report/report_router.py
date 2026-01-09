@@ -54,3 +54,36 @@ async def delete_reports(store_id: int):
         return {"status": "success", "message": f"{store_id}번 지점 리포트 초기화 완료"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/reset-all")
+async def reset_all_reports():
+    """
+    [Admin] 시스템 내 모든 AI 리포트 데이터 삭제 (DB + Redis + Local Memory)
+    """
+    from app.core.db import SessionLocal
+    from app.report.report_schema import StoreReport
+    from app.core.cache import get_redis, clear_all_local_cache
+    
+    try:
+        # 1. DB 전체 삭제
+        with SessionLocal() as session:
+            deleted_count = session.query(StoreReport).delete()
+            session.commit()
+            print(f"🗑️ [DB] 전체 리포트 {deleted_count}건 삭제 완료")
+            
+        # 2. Redis 캐시 전체 삭제
+        client = await get_redis()
+        if client:
+            keys = await client.keys("report:*")
+            if keys:
+                await client.delete(*keys)
+                print(f"🗑️ [Redis] 전체 리포트 캐시 {len(keys)}개 삭제 완료")
+                
+        # 3. 로컬 메모리 캐시 전체 삭제
+        clear_all_local_cache()
+        
+        return {"status": "success", "message": "시스템 내 모든 리포트 데이터가 초기화되었습니다."}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

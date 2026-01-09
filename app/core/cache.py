@@ -85,3 +85,21 @@ async def get_report_object_cache(store_id: int, target_date: date) -> Optional[
     """캐시에서 'report' 필드만 쏙 뽑아오기 (Service 간결화용)"""
     cached = await get_report_cache(store_id, target_date)
     return cached.get("report") if cached else None
+
+def clear_local_cache_by_store(store_id: int):
+    """특정 지점의 메모리 캐시(Local) 강제 삭제"""
+    prefix = f"report:{store_id}:"
+    keys_to_delete = [k for k in _local_cache.keys() if k.startswith(prefix)]
+    
+    for k in keys_to_delete:
+        del _local_cache[k]
+        
+    print(f"🗑️ [Local Cache] {store_id}번 지점 관련 메모리 캐시 {len(keys_to_delete)}개 삭제 완료")
+
+
+def clear_all_local_cache():
+    """모든 메모리 캐시(Local) 강제 삭제"""
+    count = len(_local_cache)
+    _local_cache.clear()
+    print(f"🗑️ [Local Cache] 전체 메모리 캐시 {count}개 삭제 완료")
+

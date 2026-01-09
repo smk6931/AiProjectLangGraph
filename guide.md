@@ -119,7 +119,10 @@ ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -
 ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -N -L 6379:localhost:6379 ubuntu@15.164.230.250 -o ServerAliveInterval=60
       
 ## RC2 터미널 접속
-AWS_EC2 = ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" ubuntu@15.164.230.250
+ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" ubuntu@15.164.230.250
+cd AiProjectLangGraph
+
+source venv/bin/activate
 
 ## 서버 백엔드 서버 올리기
 fuser -k 8080/tcp
@@ -130,8 +133,7 @@ streamlit run ui/main_ui.py
 
 ./venv/scripts/activate
 
-cd AiProjectLangGraph
-source venv/bin/activate
+
 
 
 ## 💡 Trouble Shooting & Insights
@@ -168,6 +170,9 @@ sudo apt install redis-server -y
 # 3. 서비스 시작 및 상태 확인
 sudo systemctl restart redis.service
 sudo systemctl status redis
+
+redis-cli
+keys *
 
 . 🐍 Backend (FastAPI) 로그 보기
 API 요청 들어오는 거나 에러 터지는 거 보고 싶을 때:

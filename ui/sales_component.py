@@ -267,14 +267,20 @@ def show_sales_dialog(store_id, store_name):
                 else:
                     st.error("리포트 생성에 실패했습니다.")
 
-        # [NEW] 리포트 초기화 버튼
-        if col_btn2.button("🗑️ 리포트 초기화", key=f"reset_report_{store_id}"):
+        # [NEW] 리포트 초기화 버튼 (All System Reset)
+        if col_btn2.button("� 시스템 전체 리포트 초기화", key=f"reset_report_{store_id}", help="DB, Redis, 로컬 캐시에 저장된 모든 리포트 데이터를 삭제합니다."):
             import requests
             from api_utils import API_BASE_URL
             try:
-                resp = requests.delete(f"{API_BASE_URL}/report/reset/{store_id}")
+                # [Fix] 전체 초기화 API 호출(/reset-all)
+                resp = requests.delete(f"{API_BASE_URL}/report/reset-all")
+                
                 if resp.status_code == 200:
-                    st.toast("리포트 데이터가 초기화되었습니다.", icon="🗑️")
+                    # [Fix] 서버 데이터 삭제 후, 로컬 세션(화면) 데이터도 즉시 제거해야 함
+                    st.session_state.pop(state_key_report, None)
+                    st.session_state.pop(f"last_logs_{store_id}", None)
+                    
+                    st.toast("시스템 내 모든 리포트 데이터가 초기화되었습니다.", icon="�")
                     st.rerun() # 새로고침해서 초기화된 상태 반영
                 else:
                     st.error("초기화 실패")
