@@ -1,10 +1,6 @@
 # 🧠 AI-Powered Franchise Manager (LangGraph Agent)
 
-> **"단순한 대시보드를 넘어, 스스로 생각하고 제안하는 AI 점장님"**
->
 > LangGraph 기반의 자율 에이전트(Autonomous Agent)가 매장 데이터를 분석하고, 외부 정보(날씨, 트렌드)를 결합하여 경영 전략을 제안하는 지능형 프랜차이즈 관리 시스템입니다.
-
----
 
 ## 🚀 Key Features (핵심 기능)
 
@@ -26,8 +22,6 @@
 - **Sentiment Analysis**: "커피가 식었어요" 같은 불만 리뷰를 분석하여 운영 개선점 도출.
 - **Scenario**: *"비 오는 날 고객들의 주요 불만은?"* 같은 복합 질문에 대해 벡터 검색으로 답변.
 
----
-
 ## 🛠️ Tech Stack (기술 스택)
 
 | Category | Technology | Usage |
@@ -41,33 +35,6 @@
 | **Frontend** | **Streamlit** | 인터랙티브 대시보드 및 채팅 UI 구현 |
 | **Search** | **Tavily API** | AI 전용 실시간 웹 검색 |
 
----
-
-## 🏗️ System Architecture
-
-```mermaid
-graph TD
-    User[Store Owner] -->|Chat/Query| UI[Streamlit UI]
-    UI -->|API Request| Router[FastAPI Router]
-    
-    subgraph "AI Agent System (LangGraph)"
-        Router --> Check{Query Type?}
-        Check -->|Sales/Analysis| ReportNode[Report Agent]
-        Check -->|General Inquiry| InquiryAgent[Inquiry Agent]
-        
-        InquiryAgent -->|Decision| Tools
-        Tools -->|Vector Search| DB[(PostgreSQL + pgvector)]
-        Tools -->|Web Search| Web[Tavily Search]
-        
-        InquiryAgent -->|Self-Correction| InquiryAgent
-    end
-    
-    ReportNode -->|Fetch Data| SalesDB[(Sales Data)]
-    ReportNode -->|Reasoning| LLM[LLM (Gemini/OpenAI)]
-    ReportNode -->|Generate| Result[Strategy Report]
-```
-
----
 
 ## 🏁 Getting Started (실행 방법)
 
@@ -100,12 +67,12 @@ python scripts/seed_reviews_monthly.py
 
 ### 4. 서버 실행 (Run Server)
 ```bash
-
-
 # 1. Backend API Server (FastAPI)
 python -m uvicorn main:app --reload --port 8080
 # 2. Frontend UI (Streamlit)
 streamlit run ui/main_ui.py
+
+./venv/scripts/activate
 
 pkill -f uvicorn
 pkill -f streamlit
@@ -123,22 +90,14 @@ ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -
 ## RC2 터미널 접속
 ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" ubuntu@15.164.230.250
 cd AiProjectLangGraph
-
 source venv/bin/activate
 
-## 서버 백엔드 서버 올리기
-fuser -k 8080/tcp
-python -m uvicorn main:app --host 0.0.0.0 --port 8080
-
-python -m uvicorn main:app --reload --port 8080
-streamlit run ui/main_ui.py
-
-./venv/scripts/activate
-
+## RC2 파일 복사 Back
 scp -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" `
     -r "c:\GitHub\AiProjectLangGraph\app" `
     ubuntu@15.164.230.250:/home/ubuntu/AiProjectLangGraph/
 
+## RC2 파일 복사 Front
 scp -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" `
     -r "c:\GitHub\AiProjectLangGraph\ui" `
     ubuntu@15.164.230.250:/home/ubuntu/AiProjectLangGraph/
