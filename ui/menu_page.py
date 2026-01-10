@@ -2,16 +2,23 @@ import streamlit as st
 import pandas as pd
 from api_utils import get_api
 
-
 def menu_page():
-    st.title("🍴 메뉴 관리")
-    st.write("데이터베이스에 등록된 전체 메뉴 목록입니다.")
+    # 스타일 임포트
+    try: from styles import show_metric_card
+    except ImportError: from ui.styles import show_metric_card
+
+    st.markdown("<h1>🍴 Menu Management</h1>", unsafe_allow_html=True)
+    st.caption("Centralized Menu Database & Pricing Overview")
 
     menu_data = get_api("/menu/get")
 
     if menu_data:
         # DataFrame으로 변환
         df = pd.DataFrame(menu_data)
+        
+        # [UX] 불필요한 embedding 데이터 숨기기
+        if 'embedding' in df.columns:
+            df = df.drop(columns=['embedding'])
 
         # 컬럼 한글화
         column_mapping = {
@@ -45,14 +52,12 @@ def menu_page():
         st.divider()
         st.subheader("📊 메뉴 통계")
         col1, col2, col3 = st.columns(3)
-        col1.metric("전체 메뉴 수", len(df))
+        show_metric_card(col1, "전체 메뉴 수", str(len(df)))
 
-        avg_price = df['list_price'].mean(
-        ) if 'list_price' in df and not df['list_price'].isnull().all() else 0
-        col2.metric("평균 가격", f"{avg_price:,.0f}원")
+        avg_price = df['list_price'].mean() if 'list_price' in df and not df['list_price'].isnull().all() else 0
+        show_metric_card(col2, "평균 가격", f"{avg_price:,.0f}원")
 
-        seasonal_count = len(df[df['is_seasonal'] == True]
-                             ) if 'is_seasonal' in df else 0
-        col3.metric("시즌 메뉴 수", seasonal_count)
+        seasonal_count = len(df[df['is_seasonal'] == True]) if 'is_seasonal' in df else 0
+        show_metric_card(col3, "시즌 메뉴 수", str(seasonal_count))
     else:
         st.info("메뉴 데이터를 불러올 수 없습니다.")

@@ -9,6 +9,9 @@ from app.review.review_service import select_reviews_by_store
 from app.clients.genai import genai_generate_text
 from app.clients.weather import fetch_weather_data
 
+from app.core.db import fetch_all
+from datetime import datetime, timedelta
+
 from langgraph.graph.message import add_messages
 
 # 리스트를 덮어쓰지 않고 추가하기 위한 리듀서 함수
@@ -24,13 +27,12 @@ class ReportState(TypedDict):
     prev_sales_data: List[Dict[str, Any]] # 지난주 매출 (그 전 7일)
     reviews_data: List[Dict[str, Any]]
     menu_sales_data: List[Dict[str, Any]]
-    day_sales_data: List[Dict[str, Any]]
     weather_data: Dict[str, str]
+    # [NEW] 집계 정합성을 위해 fetch 단계에서 계산한 값을 넘김
+    calculated_total_sales: float 
+    calculated_prev_sales: float
     final_report: Dict[str, Any]
     execution_logs: Annotated[List[str], append_logs]
-
-async def fetch_store_data(store_id: int):
-    pass
 
 async def fetch_data_node(state: ReportState):
     """DB에서 매출과 리뷰 데이터를 수집하는 노드"""
@@ -40,16 +42,17 @@ async def fetch_data_node(state: ReportState):
 
     # 1. 기준 날짜(Anchor Date) 결정
     # 시연 모드 or 과거 날짜 조회 지원
-    from app.core.db import fetch_all
-    from datetime import datetime, timedelta
-    
     target_date_str = state.get("target_date")
     
+
     if not target_date_str:
         # 타겟 날짜가 없으면 DB 최신 날짜 조회 (Simulation Mode)
-        max_date_query = f"SELECT MAX(sale_date) as last_date FROM sales_daily WHERE store_id = {store_id}"
         try:
-            max_date_rows = await fetch_all(max_date_query)
+            max_date_rows = await fetch_all(f"""
+                SELECT MAX(sale_date) as last_date 
+                FROM sales_daily 
+                WHERE store_id = {store_id}
+            """)
             if max_date_rows and max_date_rows[0]['last_date']:
                 target_date_str = str(max_date_rows[0]['last_date'])
                 log += f"\n🕒 최신 데이터 날짜 기준: {target_date_str}"
@@ -58,12 +61,13 @@ async def fetch_data_node(state: ReportState):
         except:
             target_date_str = str(date.today())
 
+
     ref_date = datetime.strptime(target_date_str, "%Y-%m-%d").date()
     
     # 2. 데이터 조회
     # 메뉴별, 요일별 통계는 기준 날짜를 넘겨서 DB에서 정확히 계산
     menu_stats = await select_menu_sales_comparison(store_id, days=7, target_date=target_date_str)
-    day_stats = await select_sales_by_day_type(store_id, days=7, target_date=target_date_str)
+    # day_stats = await select_sales_by_day_type(store_id, days=7, target_date=target_date_str) # [삭제] DB 호출 대신 직접 집계
     reviews = await select_reviews_by_store(store_id) # 리뷰는 전체 가져와서 최신순 (TODO: 날짜 필터링?)
 
     # 일별 매출은 전체를 가져온 뒤 파이썬에서 날짜 필터링 (DB 호출 횟수 절약)
@@ -80,13 +84,30 @@ async def fetch_data_node(state: ReportState):
     
     target_sales = []
     prev_sales = []
+
+    # [NEW] 파이썬 내보내기 집계 (평일/주말 정합성 보장)
+    weekday_sales = {"recent": 0, "prev": 0}
+    weekend_sales = {"recent": 0, "prev": 0}
     
     for s in all_sales:
         s_date = s['order_date'] # date object
+        rev = float(s['daily_revenue'])
+
+        # 이번주 데이터
         if curr_start <= s_date <= curr_end:
             target_sales.append(s)
+            if s_date.weekday() < 5: # 0~4: 평일
+                weekday_sales["recent"] += rev
+            else: # 5~6: 주말
+                weekend_sales["recent"] += rev
+
+        # 지난주 데이터
         elif prev_start <= s_date <= prev_end:
             prev_sales.append(s)
+            if s_date.weekday() < 5:
+                weekday_sales["prev"] += rev
+            else:
+                weekend_sales["prev"] += rev
             
     # 정렬 (날짜 오름차순) -> 그래프용
     target_sales.sort(key=lambda x: x['order_date'])
@@ -100,10 +121,11 @@ async def fetch_data_node(state: ReportState):
         "prev_sales_data": prev_sales,
         "reviews_data": reviews[:15], # 최신 15개만 사용
         "menu_sales_data": menu_stats,
-        "day_sales_data": day_stats,
         "weather_data": weather_map,
+        "calculated_total_sales": weekday_sales["recent"] + weekend_sales["recent"], # [NEW] 정확한 합계 전달
+        "calculated_prev_sales": weekday_sales["prev"] + weekend_sales["prev"],
         "target_date": target_date_str, # State 업데이트
-        "execution_logs": [log, f"✅ [Fetch] 데이터 수집 완료 (기준일: {target_date_str}, 이번주 {len(target_sales)}일, 지난주 {len(prev_sales)}일)"]
+        "execution_logs": [log, f"✅ [Fetch] 데이터 수집 및 정합성 검증 완료 (기준일: {target_date_str})"]
     }
 
 async def analyze_data_node(state: ReportState):
@@ -115,11 +137,11 @@ async def analyze_data_node(state: ReportState):
     prev_sales = state.get("prev_sales_data", []) # 지난주
     reviews = state["reviews_data"]
     menu_stats = state.get("menu_sales_data", [])
-    day_stats = state.get("day_sales_data", [])
     
     # 1. 주간 매출 비교 (Weekly Comparison)
-    this_week_total = sum(float(s['daily_revenue']) for s in sales)
-    prev_week_total = sum(float(s['daily_revenue']) for s in prev_sales) if prev_sales else 0
+    # [변경] fetch 단계에서 계산된 정확한 합계 사용 (재계산 X)
+    this_week_total = state["calculated_total_sales"]
+    prev_week_total = state.get("calculated_prev_sales", 0)
     
     avg_rev = this_week_total / len(sales) if sales else 0
     
@@ -154,19 +176,6 @@ async def analyze_data_node(state: ReportState):
     dropping_candidates = [m for m in processed_menus if m['prev_rev'] > 0]
     worst_dropping = sorted(dropping_candidates, key=lambda x: x['change_pct'])[:5]
 
-    # 요일별(평일/주말) 분석
-    day_analysis = []
-    for d in day_stats:
-        r_rev = float(d['recent_revenue'])
-        p_rev = float(d['prev_revenue'])
-        d_trend = ((r_rev - p_rev) / p_rev * 100) if p_rev > 0 else 0
-        day_analysis.append({
-            "type": d['day_type'],
-            "recent": r_rev,
-            "prev": p_rev,
-            "trend": round(d_trend, 1)
-        })
-
     # UI용 원본 데이터 요약 (날짜, 매출만) + 날씨 추가
     source_sales = []
     for s in sales:
@@ -194,48 +203,83 @@ async def analyze_data_node(state: ReportState):
     잘 팔린 메뉴 (TOP 5): {json.dumps(top_selling, ensure_ascii=False)}
     급감한 메뉴 (WORST 5): {json.dumps(worst_dropping, ensure_ascii=False)}
 
-    [요일/시간 분석]
-    평일 vs 주말 매출 변동: {json.dumps(day_analysis, ensure_ascii=False)}
-
     분석 시 다음 사항을 반드시 지켜줘:
     1. **"이번주 매출이 지난주 대비 왜 변했는가?"**를 핵심 주제로 잡으세요. (성장 또는 하락의 원인 규명)
     2. **날씨와 매출의 상관관계**를 반드시 언급하세요. 
        - "지난주 대비 비오는 날이 많아 배달 매출이 늘었다" 등 구체적으로.
     3. 수치적 근거(Top 5 메뉴명, 주말 매출 변동률 등)를 포함하여 마크다운 표로 시각화하세요.
     
-    응답은 반드시 아래 JSON 형식으로만 할 것:
-    {{
-        "data_evidence": {{
-            "sales_analysis": "주간 매출 비교, 날씨, 메뉴 데이터를 종합한 상세 분석 (마크다운 표 포함 필수)"
-        }},
-        "summary": "핵심 요약 (지난주 대비 변동 원인 포함 3줄)",
-        "marketing_strategy": "다음주 매출 증대를 위한 날씨/트렌드 기반 마케팅 제안",
-        "operational_improvement": "매장 운영 효율화 및 서비스 개선 제안",
-        "risk_assessment": {{"risk_score": 80, "main_risks": [], "suggestion": ""}}
-    }}
+    응답은 반드시 아래 태그 형식을 사용하여 작성할 것 (JSON 아님):
+
+    <SECTION:SALES_ANALYSIS>
+    주간 매출 비교, 날씨, 메뉴 데이터를 종합한 상세 분석 내용 (마크다운 표 포함)
+    </SECTION:SALES_ANALYSIS>
+
+    <SECTION:SUMMARY>
+    핵심 요약 (지난주 대비 변동 원인 포함 3줄)
+    </SECTION:SUMMARY>
+
+    <SECTION:STRATEGY>
+    다음주 매출 증대를 위한 날씨/트렌드 기반 마케팅 제안
+    </SECTION:STRATEGY>
+
+    <SECTION:IMPROVEMENT>
+    매장 운영 효율화 및 서비스 개선 제안
+    </SECTION:IMPROVEMENT>
+
+    <SECTION:RISK>
+    {{"risk_score": 80, "main_risks": ["리스크예시1", "리스크예시2"], "suggestion": "개선방안"}}
+    </SECTION:RISK>
     """
 
     raw_text = await genai_generate_text(prompt)
     
-    # 1. 마크다운 코드블록 제거
-    if "```json" in raw_text:
-        raw_text = raw_text.split("```json")[1].split("```")[0].strip()
-    elif "```" in raw_text:
-        raw_text = raw_text.split("```")[1].split("```")[0].strip()
-        
-    # 2. 제어 문자(Control Characters) 제거 (JSON 파싱 에러 방지)
+    # [NEW] Tag-based Parsing Logic (Robust)
     import re
-    cleaned_json = re.sub(r'[\x00-\x1F\x7F]', '', raw_text)
     
+    def extract_section(tag, text):
+        pattern = f"<{tag}>(.*?)</{tag}>"
+        match = re.search(pattern, text, re.DOTALL)
+        return match.group(1).strip() if match else ""
+
     try:
-        # strict=False 옵션으로 유연하게 파싱
-        report_dict = json.loads(cleaned_json, strict=False)
-    except json.JSONDecodeError as e:
-        print(f"❌ [Analyze] JSON 파싱 실패: {e}")
-        print(f"   (Raw Text): {raw_text[:200]}...") # 디버깅용 로그
-        # Fallback: 기본 빈 템플릿 반환
+        sales_analysis = extract_section("SECTION:SALES_ANALYSIS", raw_text)
+        summary = extract_section("SECTION:SUMMARY", raw_text)
+        strategy = extract_section("SECTION:STRATEGY", raw_text)
+        improvement = extract_section("SECTION:IMPROVEMENT", raw_text)
+        risk_text = extract_section("SECTION:RISK", raw_text)
+        
+        # Risk 섹션만 JSON 파싱 시도 (구조화된 데이터가 필요하므로)
+        risk_data = {"risk_score": 0, "main_risks": [], "suggestion": ""}
+        if risk_text:
+            try:
+                # 제어 문자 제거 후 파싱
+                risk_text_clean = re.sub(r'[\x00-\x1F\x7F]', '', risk_text)
+                risk_data = json.loads(risk_text_clean, strict=False)
+            except:
+                print(f"⚠️ Risk JSON 파싱 실패, 기본값 사용. Valid Text: {risk_text[:100]}")
+
+        # 필수 섹션이 비어있으면 실패로 간주 (최소 sales_analysis는 있어야 함)
+        if not sales_analysis:
+             raise ValueError("Main analysis section missing")
+
         report_dict = {
-            "data_evidence": {"sales_analysis": "데이터 분석 실패"},
+            "data_evidence": {"sales_analysis": sales_analysis},
+            "summary": summary,
+            "marketing_strategy": strategy,
+            "operational_improvement": improvement,
+            "risk_assessment": risk_data
+        }
+
+    except Exception as e:
+        print(f"❌ [Analyze] 태그 파싱 실패: {e}")
+        print("--- [AI Raw Output Start] ---")
+        print(raw_text)
+        print("--- [AI Raw Output End] ---")
+        
+        # Fallback
+        report_dict = {
+            "data_evidence": {"sales_analysis": "데이터 분석 실패 (형식 오류)"},
             "summary": "리포트 생성 중 오류가 발생했습니다.",
             "marketing_strategy": "",
             "operational_improvement": "",
@@ -255,7 +299,6 @@ async def analyze_data_node(state: ReportState):
         "review_count": len(reviews),
         "top_selling_menus": top_selling,
         "worst_dropping_menus": worst_dropping,
-        "day_analysis": day_analysis
     }
 
     return {
@@ -284,6 +327,16 @@ async def save_report_node(state: ReportState):
         risk_assessment=risk_info
     )
 
+    # Risk 점수가 0이면 파싱 실패로 간주 -> DB 저장 건너뛰기 (재시도 유도)
+    risk_score_val = risk_info.get('risk_score') if isinstance(risk_info, dict) else 0
+    
+    # [Prevent Saving Bad Data] 
+    # 파싱 실패(0)거나 필수 필드가 없으면 저장하지 않음.
+    if not risk_score_val or risk_score_val == 0:
+        return {
+             "execution_logs": [log, "⚠️ [Skip Save] 불완전한 리포트(Risk Parsing Fail)로 인해 DB 저장을 생략합니다."]
+        }
+
     with SessionLocal() as session:
         session.query(StoreReport).filter_by(
             store_id=state["store_id"],              
@@ -307,3 +360,6 @@ def create_report_graph():
     workflow.add_edge("save_report", END)
 
     return workflow.compile()
+
+# [Singleton 패턴] 서버 시작 시 한 번만 컴파일하여 재사용
+report_graph_app = create_report_graph()

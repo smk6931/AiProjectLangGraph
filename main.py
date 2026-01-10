@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from app.clients import genai
 from app.core.db import close_pool, init_pool
-from app.user import user_router
+# from app.user import user_router
 from app.store import store_router
 from app.menu import menu_router
 from app.order import order_router
@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-app.include_router(user_router.router)
+# app.include_router(user_router.router)
 app.include_router(store_router.router)
 app.include_router(menu_router.router)
 app.include_router(order_router.router)

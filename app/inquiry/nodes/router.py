@@ -1,58 +1,62 @@
 import json
-from app.clients.openai import client
-from app.inquiry.state import InquiryState
+from datetime import datetime, date
+from typing import Dict, Any, List
 
+# External App Imports
+from app.clients.genai import genai_generate_text
+from app.inquiry.inquiry_schema import InquiryState
+
+# ===== Router Node (질문 분류) =====
 async def router_node(state: InquiryState) -> InquiryState:
     """
-    [Router Node]
-    사용자의 질문 의도를 파악하여 적절한 카테고리(sales, manual, policy)로 분류합니다.
+    질문을 분석하여 카테고리 분류
+    - sales: 매출, 성과, 통계 관련
+    - manual: 기기 사용법, 레시피, 기술 지원
+    - policy: 운영 규정, 고객 응대, 본사 정책
     """
     question = state["question"]
     
-    system_prompt = """
-    당신은 프랜차이즈 매장 관리 시스템의 '의도 분류기(Intent Classifier)'입니다.
-    사용자의 질문을 분석하여 다음 카테고리 중 하나로 분류하고, 필요한 메타데이터를 추출하세요.
+    prompt = f"""
+    당신은 프랜차이즈 매장 질문 분류 AI입니다. 
+    질문의 핵심 의도를 파악하여 다음 3가지 중 하나로 분류하세요.
 
-    [Categories]
-    1. sales: 매출, 주문량, 인기 메뉴, 판매 추이, 리뷰 분석 등 데이터 기반 분석이 필요한 경우.
-    2. manual: 레시피, 청소 방법, 기기 조작법 등 매장 운영 메뉴얼 관련.
-    3. policy: 복장 규정, 급여, 근태, 본사 지침 등 규정 관련.
-    4. general: 그 외 단순 인사말이나 일반적인 대화.
+    질문: "{question}"
 
-    [Output Format (JSON)]
-    {
-        "category": "sales" | "manual" | "policy" | "general",
-        "reason": "분류 이유",
-        "extracted_info": {
-            "target_menu": [], // 언급된 메뉴명
-            "period": "last_week" // 언급된 기간 (없으면 null)
-        }
-    }
-    """
+    1. sales (매출/데이터):
+       - 매출, 판매량, 주문 건수, 메뉴별 성과, 통계
+       - "지난주 매출 어때?", "가장 많이 팔린 메뉴는?"
 
+    2. manual (매뉴얼/기술):
+       - 기기 조작, 고장 수리, 청소 방법, 레시피
+       - "커피머신 청소 어떻게 해?", "와이파이 연결법"
+
+    3. policy (정책/외부정보):
+       - 매장 운영 규정, 환불/반품 정책, 고객 응대 매뉴얼
+       - **[중요]**: "맛집 추천", "날씨", "뉴스", "주변 상권" 등 외부 정보 검색이 필요한 경우도 'policy'로 분류
+
+    [Output Format]
+    JSON으로만 응답하세요:
+    {{"category": "sales" | "manual" | "policy", "reason": "분류 이유"}}
+    """ 
+    
+    # LLM 호출 (Gemini로 간소화)
     try:
-        response = await client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": question}
-            ],
-            temperature=0,
-            response_format={"type": "json_object"}
-        )
-        content = response.choices[0].message.content
-        parsed = json.loads(content)
-        category = parsed.get("category", "general")
-        requirements = parsed.get("extracted_info", {})
+        # 가볍고 빠른 gemai 사용
+        response = await genai_generate_text(prompt)
         
-        print(f"🔀 [Router] Category: {category} | Info: {requirements}")
-        
+        # JSON 파싱
+        content = response.replace("```json", "").replace("```", "").strip()
+        data = json.loads(content)
+        category = data.get("category", "policy") # 기본값 policy
+        reason = data.get("reason", "")
     except Exception as e:
-        print(f"⚠️ [Router Error] {e}")
-        category = "general"
-        requirements = {}
+        print(f"⚠️ [Router] 분류 오류 (Fallback to policy): {e}")
+        category = "policy"
+        reason = "Error Parsing"
+        data = {}
 
-    return {
-        "category": category,
-        "requirements": requirements
-    }
+    print(f"🔀 [Router] Category Decision: {category} (Reason: {reason})")
+    
+    # State 업데이트
+    state["category"] = category
+    return state

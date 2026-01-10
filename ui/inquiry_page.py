@@ -5,428 +5,410 @@ import pandas as pd
 import altair as alt
 import os
 
-# API URL 설정 (로컬/서버 환경 자동 감지)
+# 스타일 파일 임포트 (Root 실행 기준)
+try:
+    from ui.styles import apply_custom_styles, show_metric_card
+except ImportError:
+    # 혹시 모를 경로 에러 대비 (같은 폴더)
+    from styles import apply_custom_styles, show_metric_card
+
+# API URL 설정
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8080")
 
-# --------------------------------------------------------------------------
-# [UI Component 1] LangGraph 아키텍처 다이어그램
-# --------------------------------------------------------------------------
-def show_langgraph_architecture():
-    """LangGraph 아키텍처 다이어그램을 표시하는 함수"""
-    with st.expander("🧠 AI Agent 아키텍처 (LangGraph 구조도)", expanded=False):
-        st.markdown("**이 AI Agent는 사용자의 의도를 파악하여 최적의 경로로 라우팅합니다.**")
-        st.graphviz_chart("""
-            digraph {
-                rankdir=LR;
-                node [shape=box, style=filled, fillcolor="white", fontname="Malgun Gothic"];
-                edge [color="#666666"];
-                
-                User [label="👤 사용자 질문", shape=oval, fillcolor="#FFD700", style="filled,bold"];
-                Router [label="🤖 AI Router\n(의도 파악/LLM)", fillcolor="#87CEEB", style="filled,rounded"];
-                
-                subgraph cluster_tools {
-                    label = "🛠️ Tools & Knowledge Base";
-                    style=dashed;
-                    color="#444444";
-                    
-                    DB [label="📊 Sales DB\n(PostgreSQL)", fillcolor="#98FB98"];
-                    RAG_Manual [label="📘 Manual RAG\n(Vector DB)", fillcolor="#FFB6C1"];
-                    RAG_Policy [label="⚖️ Policy RAG\n(Vector DB)", fillcolor="#FFB6C1"];
-                    Web [label="🌐 Web Search\n(genai_google_search_tool)", fillcolor="#E0E0E0"];
-                }
-                
-                End [label="💬 최종 답변", shape=oval, fillcolor="#FFD700", style="filled,bold"];
+# ==============================================================================
+# [UI Component 1] LangGraph 아키텍처 다이어그램 (Expander)
+# ==============================================================================
+# def show_langgraph_architecture():
+#     with st.expander("AI Agent 아키텍처 (Processing Flow)", expanded=False):
+#         st.markdown("""
+#         <div style="text-align: center; color: #8B949E; margin-bottom: 10px;">
+#             User Intent Analysis ➔ Route Optimization ➔ Specialized Retrieval ➔ Synthesis
+#         </div>
+#         """, unsafe_allow_html=True)
 
-                User -> Router [penwidth=2];
-                Router -> DB [label="매출/통계", color="green"];
-                Router -> RAG_Manual [label="방법/매뉴얼", color="red"];
-                Router -> RAG_Policy [label="규정/계약", color="red"];
-                Router -> Web [label="그 외 정보", style="dashed"];
-                
-                DB -> End;
-                RAG_Manual -> End;
-                RAG_Policy -> End;
-                Web -> End;
-            }
-        """)
+# ... (중략) ...
 
-# --------------------------------------------------------------------------
-# [UI Component 2] 추천 프롬프트 (Sample Prompts)
-# --------------------------------------------------------------------------
+# ==============================================================================
+# [UI Component 2] 추천 프롬프트 & 로그
+# ==============================================================================
 def show_sample_prompts():
-    """사용자가 참고할 만한 추천 프롬프트를 보여주는 토글"""
-    with st.expander("� 질문이 막막하신가요? (추천 프롬프트)", expanded=False):
-        tab1, tab2 = st.tabs(["📊 매출 분석", "📘 규정 & 매뉴얼"])
-        with tab1:
-            st.markdown("""
-            - "**서울강남점**의 **매출 하락 원인**을 메뉴별로 분석해줘"
-            - "최근 1주일간 가장 잘팔린 메뉴 best 5와 worst 5와 이유를 그 메뉴에 대한 리뷰를 분석하여 답변해줘
-            - "부산, 서울 지점 매출과 리뷰를 분석하여 각 지점 비교를 통한 개선점을 답변해줘"
-            """)
-        with tab2:
-            st.markdown("""
-            - "**고객이 환불을 요구**할 때 규정과 응대 멘트 알려줘"
-            - "**오픈 조**와 **마감 조**가 해야 할 필수 체크리스트는?"
-            - "매장 **위생 점검** 항목 리스트와 준비물 요약해줘"
-            - "**신규 아르바이트생 교육** 시 강조해야 할 복장 규정은?"
-            - "서울 종로구의 짜장면 맛집 추천(DB외의 프롬프트 입력 웹서치 추천)"
-            """)
+    """추천 프롬프트 섹션"""
+    with st.expander("추천 질문 (Click to Copy)", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            st.caption("매출 분석")
+            st.code('서울강남점의 최근 매출 하락 원인을 메뉴별로 분석해줘', language=None)
+            st.code('최근 1주일간 가장 잘팔린 메뉴 Top 5와 그 이유를 리뷰 기반으로 알려줘', language=None)
+            st.code('부산점과 서울점의 매출과 리뷰를 비교해서 개선점을 제안해줘', language=None)
+        with c2:
+            st.caption("매뉴얼 & 규정")
+            st.code('고객이 환불을 요구할 때 규정과 응대 멘트 알려줘', language=None)
+            st.code('오픈 조와 마감 조가 해야 할 필수 체크리스트는?', language=None)
+            # st.code('매장 위생 점검 항목 리스트와 준비물 요약해줘', language=None)
+            # st.code('신규 아르바이트생 교육 시 강조해야 할 복장 규정은?', language=None)
+            st.code('서울 종로구의 짜장면 맛집 추천해줘 (웹 검색)', language=None)
 
-# --------------------------------------------------------------------------
-# [UI Component 3] 최근 검색어 (Real-time Logs)
-# --------------------------------------------------------------------------
 def show_recent_logs():
-    """최근 검색 기록을 보여주는 토글"""
-    with st.expander("🕒 최근 다른 점주님들의 검색어 (Real-time Logs)", expanded=False):
-        if "messages" in st.session_state:
-            recent_prompts = [
-                msg["content"] 
-                for msg in reversed(st.session_state.messages) 
-                if msg["role"] == "user"
-            ][:5]
-            if recent_prompts:
-                for q in recent_prompts:
-                    st.text(f"🔍 {q}")
-            else:
-                st.info("아직 검색 기록이 없습니다.")
+    """최근 검색어 섹션"""
+    with st.expander("최근 검색 기록 (Recent Activity)", expanded=False):
+        if "messages" in st.session_state and len(st.session_state.messages) > 1:
+            recent = [m["content"] for m in reversed(st.session_state.messages) if m["role"]=="user"][:5]
+            for r in recent: st.text(f"🔍 {r}")
+        else:
+            st.info("No recent activity.")
 
-# --------------------------------------------------------------------------
-# [Logic] AI 메시지 렌더링 함수
-# --------------------------------------------------------------------------
+# ==============================================================================
+# [Logic] AI 메시지 렌더링 (Custom CSS 적용)
+# ==============================================================================
 def display_ai_message(message_content):
     """
-    AI 메시지를 렌더링하는 함수 (JSON 처리 + 시각화)
+    AI 응답을 파싱하여 카드형 UI, 차트 등으로 렌더링
     """
+    json_data = None
+    
+    # 1. Parsing 시도
     try:
-        # 1. JSON 파싱 시도
-        if isinstance(message_content, str):
-            json_data = json.loads(message_content)
-        else:
+        if isinstance(message_content, dict):
             json_data = message_content
+        elif isinstance(message_content, str):
+            # 혹시 마크다운 코드 블록(```json ... ```)으로 감싸져 있을 경우 제거
+            clean_content = message_content.strip()
+            if clean_content.startswith("```json"):
+                clean_content = clean_content[7:]
+            if clean_content.endswith("```"):
+                clean_content = clean_content[:-3]
             
-        # 2. Key Metrics (숫자 카드) 렌더링
+            json_data = json.loads(clean_content)
+    except json.JSONDecodeError:
+        # JSON이 아닌 일반 텍스트 메시지 (단순 출력)
+        st.markdown(message_content)
+        return
+    except Exception as e:
+        st.error(f"Error parsing response: {e}")
+        st.code(message_content)
+        return
+
+    # 2. 렌더링 로직 (파싱 성공 시)
+    try:
+        if not json_data:
+            st.markdown(str(message_content))
+            return
+
+        # (1) Key Metrics (카드 UI)
         if "key_metrics" in json_data and json_data["key_metrics"]:
             metrics = json_data["key_metrics"]
-            cols = st.columns(3)
-            with cols[0]:
-                st.metric(label="기간", value=metrics.get("period", "-"))
-            with cols[1]:
-                st.metric(label="총 매출", value=f"{int(metrics.get('total_sales', 0)):,}원")
-            with cols[2]:
-                st.metric(label="총 주문", value=f"{int(metrics.get('total_orders', 0)):,}건")
-            st.divider()
+            # 리스트형 처리
+            if isinstance(metrics, dict):
+                 m_list = [{"label": k, "value": v} for k, v in metrics.items()]
+            else:
+                 m_list = metrics
+            
+            if m_list:
+                cols = st.columns(len(m_list[:3]))
+                for i, m in enumerate(m_list[:3]):
+                    show_metric_card(
+                        cols[i], 
+                        label=str(m.get("label") or m.get("title", "Metric")), 
+                        value=str(m.get("value")), 
+                        delta=str(m.get("delta")) if m.get("delta") else None
+                    )
+                st.markdown("---")
 
-        # 3. Chart Rendering (그래프)
+        # (2) Chart Rendering
         if "chart_data" in json_data and json_data["chart_data"]:
-            chart_setup = json_data.get("chart_setup") or {}
-            st.caption("📊 " + chart_setup.get("title", "데이터 시각화"))
-            df = pd.DataFrame(json_data["chart_data"])
-            base = alt.Chart(df).encode(x=alt.X('date', axis=alt.Axis(title='날짜')))
-            if "store" in df.columns and df['store'].nunique() > 1:
-                 # 지점이 여러개일 경우 색상으로 구분 (범례 자동 생성)
-                 base = base.encode(color='store')
-                 # 색상 지정 제거 (Altair 기본 팔레트 사용)
-                 bar = base.mark_bar().encode(y=alt.Y('sales', axis=alt.Axis(title='매출액(원)')))
-                 line = base.mark_line().encode(y=alt.Y('orders', axis=alt.Axis(title='주문수(건)')))
-            else:
-                 # 단일 지점일 경우 고정 색상 사용
-                 bar = base.mark_bar(color='#5DADE2').encode(y=alt.Y('sales', axis=alt.Axis(title='매출액(원)')))
-                 line = base.mark_line(color='#E74C3C').encode(y=alt.Y('orders', axis=alt.Axis(title='주문수(건)')))
-            chart = alt.layer(bar, line).resolve_scale(y='independent')
-            st.altair_chart(chart, use_container_width=True)
-
-        # 4. 텍스트 내용 렌더링
-        if "summary" in json_data:
-            st.info(f"💡 요약: {json_data['summary']}")
-        if "detail" in json_data:
-            st.markdown(json_data['detail'])
-        if "action_items" in json_data and json_data["action_items"]:
-            st.markdown("### 📋 제안 사항")
-            for item in json_data["action_items"]:
-                st.markdown(f"- {item}")
-        if "sources" in json_data and json_data["sources"]:
-            st.caption("📚 참고 자료:")
-            for src in json_data["sources"]:
-                st.caption(f"- {src}")
-
-        # [Evidence] 분석에 활용된 실제 리뷰 (UI)
-        # [Evidence] 분석에 활용된 실제 리뷰 (UI)
-        evidence_reviews = json_data.get("used_reviews", []) or json_data.get("menu_reviews", [])
-        
-        # 데이터가 있든 없든 Expander 틀은 보여주는데, 없으면 "데이터 없음" 표시
-        with st.expander(f"🔍 분석에 활용된 리뷰 데이터 ({len(evidence_reviews)}건)", expanded=False):
-            if evidence_reviews:
-                # 1. 요약 리스트 (Top 10)
-                st.markdown("**📋 주요 리뷰 샘플 (Top 10)**")
-                for i, r in enumerate(evidence_reviews[:10]):
-                    menu_tag = f"**[{r.get('menu_name', '전체')}]**" if r.get('menu_name') else ""
-                    st.markdown(f"{i+1}. {menu_tag} ⭐{r.get('rating')}: {r.get('review_text')}")
+            title = json_data.get("chart_setup", {}).get("title", "데이터 시각화")
+            st.markdown(f"#### 📊 {title}")
+            
+            c_data = json_data["chart_data"]
+            if isinstance(c_data, list) and len(c_data) > 0:
+                df = pd.DataFrame(c_data)
                 
-                if len(evidence_reviews) > 10:
-                    st.divider()
-                    st.caption(f"외 {len(evidence_reviews)-10}건의 리뷰가 더 있습니다.")
-                    
-                    # 2. 전체 데이터 (DataFrame)
-                    df_ev = pd.DataFrame(evidence_reviews)
-                    if not df_ev.empty:
-                         # UI에 보기 좋게 컬럼 정리
-                         cols_to_show = ['ordered_at', 'menu_name', 'rating', 'review_text']
-                         # 존재하는 컬럼만 선택
-                         valid_cols = [c for c in cols_to_show if c in df_ev.columns]
-                         st.dataframe(df_ev[valid_cols], use_container_width=True, hide_index=True)
-            else:
-                st.caption("이 분석에는 개별 리뷰 데이터가 직접 활용되지 않았습니다.")
+                # Chart Setup 정보 활용
+                c_setup = json_data.get("chart_setup", {})
+                x_col = c_setup.get("x", "date") # 기본값 date
+                y_col = c_setup.get("y", "sales") # 기본값 sales
+                
+                # 컬럼이 실제 데이터에 있는지 확인 (없으면 첫번째, 두번째 컬럼 사용)
+                if x_col not in df.columns: x_col = df.columns[0]
+                if y_col not in df.columns and len(df.columns) > 1: y_col = df.columns[1]
 
-    except json.JSONDecodeError:
-        st.markdown(message_content)
+                # Altair Chart (Dynamic Coloring)
+                base = alt.Chart(df).mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5).encode(
+                    x=alt.X(f'{x_col}:O', title=x_col.upper(), axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y(f'{y_col}:Q', title=y_col.upper()),
+                    tooltip=list(df.columns)
+                )
+
+                if "store" in df.columns:
+                    # 지점별 비교 시 색상 구분 (Legend 자동 생성)
+                    chart = base.encode(color=alt.Color("store:N", title="지점"))
+                else:
+                    # 단일 지점 시 단색
+                    chart = base.encode(color=alt.value("#4facfe"))
+                
+                chart = chart.properties(height=300)
+                st.altair_chart(chart, use_container_width=True)
+
+        # (3) Text Content
+        if "answer" in json_data:
+            st.markdown(json_data['answer'])
+        elif "summary" in json_data:
+            st.info(f"💡 **Insight**: {json_data['summary']}")
+            
+        # (4) References
+        if "used_docs" in json_data and json_data["used_docs"]:
+             with st.expander("📚 Referenced Sources (참고 자료)"):
+                 for d in json_data["used_docs"]:
+                     if "http" in d:
+                         # URL Link Parsing
+                         parts = d.split("http")
+                         text_title = parts[0].strip(" -[]")
+                         url = "http" + parts[1].split()[0].rstrip(")")
+                         
+                         title = text_title if text_title else "External Link"
+                         st.markdown(f"- 🔗 [{title}]({url})")
+                     else:
+                         st.markdown(f"- {d}")
+
+        if "used_reviews" in json_data:
+             revs = json_data["used_reviews"]
+             if revs:
+                 with st.expander(f"💬 고객 리뷰 근거 ({len(revs)}건)"):
+                      for r in revs[:5]:
+                          st.caption(f"{r.get('ordered_at', '')[:10]} | {r.get('menu_name', '')}")
+                          st.markdown(f"**{'⭐'*int(r.get('rating',0))}**: {r.get('review_text')}")
+                          st.divider()
+
     except Exception as e:
-        st.error(f"렌더링 오류: {e}")
-        st.markdown(message_content)
+        st.error(f"Render Error: {e}")
+        st.write(json_data)
+            
+# ... (중략) ...
 
-# --------------------------------------------------------------------------
-# [Page] 메인 페이지 함수 (여기가 핵심!)
-# --------------------------------------------------------------------------
+# ==============================================================================
+# [Page] 메인 페이지 엔트리포인트
+# ==============================================================================
 def inquiry_page():
-    st.title("🤖 AI 프랜차이즈 매니저 (SOS)")
-    st.markdown("매장 운영 중 궁금한 점이나 긴급 상황을 물어보세요. AI가 매뉴얼과 데이터를 분석해 즉시 답변합니다.")
-
-    # [NEW] 포트폴리오용 추가 컴포넌트 3종 세트
-    show_langgraph_architecture()
+    # 1. Custom CSS 적용
+    apply_custom_styles()
+    
+    # 2. Header Area
+    st.markdown("<h1>AI Franchise Manager</h1>", unsafe_allow_html=True)
+    st.caption("LLM & LangGraph 기반 지능형 매장 운영 지원 시스템")
+    
+    # 3. Top Components
+    # show_langgraph_architecture()
     show_sample_prompts()
     show_recent_logs()
     
     st.divider()
 
-    # 세션 상태 초기화
+    # 4. Session Init
     if "messages" not in st.session_state:
-        st.session_state.messages = []
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": "안녕하세요 점주님! 무엇을 도와드릴까요?\n\n- 매출 분석\n- 기기 고장/관리\n- 고객 응대/규정", 
-            "category": "system"
-        })
+        st.session_state.messages = [{
+            "role": "assistant", 
+            "content": "안녕하세요! 점주님, 무엇을 도와드릴까요?\n\n데이터 분석, 매장 규정, 고객 응대 등 궁금한 점을 편하게 물어보세요."
+        }]
 
-    # 1. 채팅 기록 표시
+    # 5. Chat History Render
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
-            # 과정 로그 출력
             if "logs" in msg:
-                with st.status("✅ 분석 과정 기록", expanded=False, state="complete") as status:
-                    for log in msg["logs"]:
-                        st.write(f"🔹 {log['message']}")
-                        if log.get('details') and log['details'].get('type') == 'web_result':
-                            with st.expander("🌐 웹 검색 결과 확인", expanded=True):
-                                st.write(log['details']['content'])
-            # 최종 답변 출력
+                # 상태 메시지를 작고 깔끔하게
+                with st.status("✅ Analysis Process", expanded=False, state="complete") as s:
+                    for l in msg["logs"]: 
+                         st.write(f"🔹 {l['message']}")
             if msg["content"]:
                 display_ai_message(msg["content"])
 
-    # 2. 사용자 입력 처리
+    # 6. User Input
     if prompt := st.chat_input("질문을 입력하세요..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.chat_message("user").markdown(prompt)
         
-        # 3. [Phase 1] 검색 및 진단 요청
+        # --- [Phase 1: Check] ---
         with st.chat_message("assistant"):
-            with st.status("🕵️‍♀️ 질문을 분석하고 내부 데이터를 검색 중입니다...", expanded=True) as status:
+            with st.status("🕵️ Analyzing your inquiry...", expanded=True) as status:
                 try:
                     res = requests.post(f"{API_BASE_URL}/inquiry/check", json={"store_id": 1, "question": prompt})
                     if res.status_code == 200:
-                        check_data = res.json()["data"]
-                        status.update(label="✅ 검색 완료! 결과를 확인해주세요.", state="complete", expanded=False)
-                        st.session_state.pending_inquiry = {"question": prompt, "check_data": check_data}
+                        data = res.json()["data"]
+                        status.update(label="Analysis Complete. Please select an action.", state="complete", expanded=False)
+                        st.session_state.pending_inquiry = {"question": prompt, "data": data}
                         st.rerun()
                     else:
-                        status.update(label="❌ 오류 발생", state="error")
-                        st.error("서버 오류가 발생했습니다.")
+                        status.update(label="Server Error", state="error")
                 except Exception as e:
-                    status.update(label="❌ 연결 실패", state="error")
-                    st.error(f"API 호출 실패: {e}")
+                    status.update(label=f"Connection Error: {e}", state="error")
 
-    # 4. [Phase 2] 사용자 선택 대기 (검색 결과가 있을 때)
+    # 7. [Phase 2: Action Selection]
     if "pending_inquiry" in st.session_state:
         pending = st.session_state.pending_inquiry
-        data = pending["check_data"]
+        # data 변수 제거하고 직접 접근
+        category = pending["data"].get("category", "general")
         question = pending["question"]
-        cat = data["category"]
-        score = data["similarity_score"]
-        top_doc = data.get("top_document")
         
         with st.chat_message("assistant"):
-            st.info(f"🤔 **'{cat}'** 관련 질문이군요.")
+            # 깔끔한 Action Card
+            st.markdown(f"""
+            <div style="background-color: #1F242C; border: 1px solid #4facfe; border-radius: 8px; padding: 15px; margin-bottom: 10px;">
+                <h3 style="margin:0; color: #4facfe;">🚀 {category.upper()} Analysis</h3>
+                <p style="color: #8B949E; margin-top: 5px;">질문의 의도를 파악하고 관련 데이터를 조회했습니다.</p>
+            </div>
+            """, unsafe_allow_html=True)
             
-            if cat == "sales":
-                st.write("매출 데이터를 분석하여 진단 리포트를 생성합니다.")
-                
-                # [NEW Feature] AI Analyzing Reasoning Display
-                if "sales_data" in data and "scope" in data["sales_data"]:
-                    sd = data["sales_data"]
-                    scope_map = {"ALL": "전 메뉴 / 전 지점", "SEOUL": "서울 지점 (Gangnam)", "BUSAN": "부산 지점 (Seomyeon)", "GANGWON": "강원 지점"}
-                    scope_txt = scope_map.get(sd.get('scope'), sd.get('scope'))
-                    
-                    with st.expander("🧐 AI 분석 기준 확인 (Reasoning)", expanded=True):
-                        st.markdown(f"**1. 분석 대상:** `{scope_txt}`")
-                        st.markdown(f"**2. 활용 데이터:** `{', '.join(sd.get('tables_used', []))}`")
-                        st.markdown(f"**3. 분석 기간:** `{sd.get('period')}`")
-                        
-                        # [Reasoning Display]
-                        if "reason" in sd:
-                            st.info(f"💡 **판단 근거:** {sd['reason']}")
-                        else:
-                            st.caption("AI가 질문의 의도를 분석하여 위 기준으로 데이터를 조회했습니다.")
-
-                sc1, sc2 = st.columns([2, 1])
-                with sc1:
-                    if st.button("🚀 분석 시작", type="primary", use_container_width=True):
-                        st.session_state.processing_mode = "db"
-                        st.session_state.processing_meta = {"question": question, "category": cat, "context": []}
-                        del st.session_state.pending_inquiry
-                        st.rerun()
-                with sc2:
-                    if st.button("❌ 종료", use_container_width=True):
-                        del st.session_state.pending_inquiry
-                        st.rerun()
-            else:
-                # [Human-in-the-loop] Top 5 Selection & AI Recommendation
-                candidates = data.get("candidates", data.get("context_data", []))
-                recommendation = data.get("recommendation", {})
-                rec_indices = recommendation.get("indices", [])
-                rec_comment = recommendation.get("comment", "")
-                
-                st.write(f"🔍 **AI가 찾은 관련 문서 (Top {len(candidates)})**")
-                
-                chosen_context = []
-                if candidates:
-                    # AI 추천 코멘트 표시
-                    if rec_comment:
-                        st.info(f"🤖 **AI 추천:** {rec_comment}")
-                    
-                    cand_map = {}
-                    default_selections = []
-                    
-                    for i, c_str in enumerate(candidates):
-                        head = c_str.split('\n')[0]
-                        label = f"{i+1}. {head}"
-                        cand_map[label] = c_str
-                        
-                        # AI가 추천한 인덱스면 기본 선택에 추가 (0-based index)
-                        if i in rec_indices:
-                            default_selections.append(label)
-                        
-                    # 다중 선택 UI (Pills)
-                    selected_labels = st.pills(
-                        "참고할 문서를 모두 선택해주세요:", 
-                        list(cand_map.keys()), 
-                        default=default_selections, 
-                        selection_mode="multi"
-                    )
-                    
-                    # 선택된 문서들 미리보기 및 컨텍스트 구성
-                    if selected_labels:
-                        with st.expander(f"📖 선택된 문서 미리보기 ({len(selected_labels)}개)", expanded=True):
-                            for label in selected_labels:
-                                sel_full = cand_map[label]
-                                header_part = sel_full.split('\n')[0]
-                                body_part = sel_full[len(header_part)+1:]
-                                st.markdown(f"**{header_part}**")
-                                st.caption(body_part[:200] + "...") # 요약해서 보여줌
-                                st.divider()
-                                chosen_context.append(sel_full)
-                    else:
-                        st.warning("선택된 문서가 없습니다.")
+            if category == "sales":
+                # [분석 정보 미리보기] 직접 접근 방식 사용
+                if pending["data"].get("sales_data"):
+                    st.info(f"""
+                    **📋 분석 계획 (Execution Plan)**
+                    - **Target Store**: {pending["data"]["sales_data"].get("target_store_name") or "전체 지점"}
+                    - **Data Sources**: Sales(매출), Reviews(리뷰), Menus(메뉴)
+                    - **Analysis Type**: Trend & Performance
+                    """)
                 else:
-                     st.warning("관련 문서를 찾지 못했습니다.")
-
-                col1, col2, col3 = st.columns([2, 2, 1])
-                with col1:
-                    btn_text = "✅ 선택 문서로 답변" if candidates else "✅ 답변 생성 (전체 자료)"
-                    btn_type = "primary" if score >= 60 else "secondary"
+                    st.write("매출 데이터를 심층 분석하여 리포트를 생성합니다.")
+                c1, c2 = st.columns([1, 1])
+                if c1.button("분석 시작", type="primary", use_container_width=True):
+                    st.session_state.processing_mode = "db"
+                    # [Optimization] 이미 가져온 Sales Data를 재사용하기 위해 Context에 전달
+                    sales_payload = [pending["data"].get("sales_data", {})]
+                    st.session_state.processing_meta = {"question": question, "category": category, "context": sales_payload}
+                    del st.session_state.pending_inquiry
+                    st.rerun()
+                if c2.button("취소", use_container_width=True):
+                    del st.session_state.pending_inquiry
+                    st.rerun()
+            else: # Manual / Policy
+                candidates = pending["data"].get("candidates", [])
+                st.write(f"🔍 **{len(candidates)}**건의 관련 문서를 찾았습니다.")
+                
+                # [AI Recommendation]
+                recommendation = pending["data"].get("recommendation", {})
+                if recommendation and recommendation.get("comment"):
+                    rec_msg = recommendation["comment"]
+                    if "웹 검색" in rec_msg or "낮습니다" in rec_msg:
+                        st.warning(f"{rec_msg}")
+                    else:
+                        st.success(f"{rec_msg}")
+                
+                selected_docs = []
+                if candidates:
+                    st.markdown("---")
+                    st.caption("참고할 문서를 선택하세요 (체크박스):")
                     
-                    if st.button(btn_text, type=btn_type, use_container_width=True, disabled=(not candidates)):
-                        st.session_state.processing_mode = "db"
-                        st.session_state.processing_meta = {"question": question, "category": cat, "context": chosen_context}
-                        del st.session_state.pending_inquiry
-                        st.rerun()
-                with col2:
-                    btn_type = "primary" if score < 60 else "secondary"
-                    if st.button("🌐 웹 검색", type=btn_type, use_container_width=True):
-                        st.session_state.processing_mode = "web"
-                        st.session_state.processing_meta = {"question": question, "category": cat, "context": []}
-                        del st.session_state.pending_inquiry
-                        st.rerun()
-                with col3:
-                    if st.button("❌ 종료", use_container_width=True):
-                        del st.session_state.pending_inquiry
-                        st.rerun()
+                    for c in candidates:
+                        # 파싱: [제목] (유사도: 0.xx) 형태라고 가정
+                        first_line = c.split('\n')[0]
+                        # 제목과 상세 내용 분리
+                        title = first_line
+                        score_text = ""
+                        
+                        if "(유사도:" in first_line:
+                            parts = first_line.split("(유사도:")
+                            title = parts[0].strip()
+                            score_text = f"(유사도: {parts[1].replace(')', '').strip()})"
+                        
+                        # 카드 스타일 배경
+                        col_chk, col_txt = st.columns([0.1, 0.9])
+                        with col_chk:
+                             # Default True
+                             is_checked = st.checkbox("Select", value=True, key=c[:20], label_visibility="collapsed")
+                        
+                        with col_txt:
+                             # Custom Style
+                             st.markdown(f"""
+                             <div style="
+                                 background-color: #161B22; 
+                                 padding: 10px; 
+                                 border-radius: 8px; 
+                                 border: 1px solid #30363D; 
+                                 display: flex; 
+                                 justify-content: space-between; 
+                                 align-items: center;
+                                 margin-bottom: 5px;">
+                                 <span style="font-weight: bold; color: #E6EDF3;">📄 {title}</span>
+                                 <span style="font-size: 0.8em; color: #4facfe; background-color: rgba(79, 172, 254, 0.1); padding: 2px 8px; border-radius: 12px;">
+                                     {score_text}
+                                 </span>
+                             </div>
+                             """, unsafe_allow_html=True)
+                             # 상세 내용 (옵션: 너무 길면 생략하거나 expander로)
+                             # with st.expander("내용 미리보기"):
+                             #    st.text(c)
+                        
+                        if is_checked:
+                             selected_docs.append(c)
+                    
+                    st.markdown("---")
+                
+                c1, c2 = st.columns([1, 1])
+                if c1.button("답변 생성", type="primary", use_container_width=True):
+                    st.session_state.processing_mode = "db"
+                    st.session_state.processing_meta = {"question": question, "category": category, "context": selected_docs}
+                    del st.session_state.pending_inquiry
+                    st.rerun()
+                if c2.button("웹 검색 (Google)", use_container_width=True):
+                    st.session_state.processing_mode = "web"
+                    st.session_state.processing_meta = {"question": question, "category": category, "context": []}
+                    del st.session_state.pending_inquiry
+                    st.rerun()
 
-    # 5. [Phase 3] 최종 답변 생성 (선택 완료 후)
+    # 8. [Phase 3: Generation]
     if "processing_mode" in st.session_state:
-        mode = st.session_state.processing_mode
-        meta = st.session_state.get("processing_meta", {})
-        question = meta.get("question", "")
-        category = meta.get("category", "manual")
-        context = meta.get("context", [])
+        meta = st.session_state.processing_meta
         
         with st.chat_message("assistant"):
-            status_container = st.status(f"🚀 {mode.upper()} 모드로 답변 생성 중...", expanded=True)
+            st_status = st.status("Generating Response...", expanded=True)
+            full_resp = ""
+            logs = []
+            
             try:
-                response = requests.post(
-                    f"{API_BASE_URL}/inquiry/generate/stream",
-                    json={"store_id": 1, "question": question, "category": category, "mode": mode, "context_data": context},
-                    stream=True
-                )
+                # 스트리밍 요청
+                res = requests.post(f"{API_BASE_URL}/inquiry/generate/stream", json={
+                    "store_id": 1,
+                    "question": meta["question"],
+                    "category": meta["category"],
+                    "mode": st.session_state.processing_mode,
+                    "context_data": meta["context"]
+                }, stream=True)
                 
-                final_result = {}
-                execution_logs = []
+                final_obj = None
+                for line in res.iter_lines():
+                    if line:
+                        try:
+                            d = json.loads(line.decode('utf-8'))
+                            if "step" in d and d["step"] != "done":
+                                msg = d.get("message", "")
+                                st_status.write(f"🔹 {msg}")
+                                logs.append(d)
+                            if "final_answer" in d:
+                                final_obj = d["final_answer"]
+                        except: continue
                 
-                if response.status_code == 200:
-                    for line in response.iter_lines():
-                        if line:
-                            try:
-                                decoded = line.decode('utf-8')
-                                data = json.loads(decoded)
-                                step = data.get("step")
-                                msg = data.get("message")
-                                details = data.get("details")
-                                
-                                status_container.write(f"🔹 {msg}")
-                                if details and details.get("type") == "web_result":
-                                     with status_container.expander("🌐 웹 검색 결과"):
-                                         st.write(details.get("content"))
-                                
-                                execution_logs.append({"step": step, "message": msg, "details": details})
-                                if data.get("final_answer"):
-                                    final_result["answer"] = data["final_answer"]
-                                    final_result["category"] = category
-                            except: continue
-                            
-                    status_container.update(label="✅ 분석 및 답변 생성 완료!", state="complete", expanded=True)
-                    
-                    if "answer" in final_result:
-                        answer = final_result["answer"]
-                        display_ai_message(answer)
-                        st.session_state.messages.append({
-                            "role": "assistant", 
-                            "content": answer, 
-                            "category": category, 
-                            "raw_category": category, 
-                            "logs": execution_logs 
-                        })
+                st_status.update(label="Complete!", state="complete", expanded=False)
+                
+                if final_obj:
+                    # JSON 직렬화
+                    full_resp = json.dumps(final_obj) if isinstance(final_obj, (dict, list)) else final_obj
+                    display_ai_message(full_resp)
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": full_resp, 
+                        "logs": logs
+                    })
                 else:
-                    st.error(f"오류: {response.text}")
+                    st.error("Failed to generate answer.")
             except Exception as e:
-                st.error(f"실행 오류: {e}")
-                
+                st.error(f"Error: {e}")
+        
         del st.session_state.processing_mode
-        if "processing_meta" in st.session_state: del st.session_state.processing_meta
+        del st.session_state.processing_meta
         st.rerun()
 
-    # 사이드바 팁
+    # Sidebar
     with st.sidebar:
-        st.info("💡 **Tip**")
-        st.markdown("- 지난달 매출 어때?")
-        st.markdown("- 커피 머신 오류")
-        st.markdown("- 환불 규정")
-        if st.button("🗑️ 대화 초기화"):
+        st.caption("Developed with LangGraph")
+        if st.button("Reset Conversation", use_container_width=True):
             st.session_state.messages = []
             st.rerun()

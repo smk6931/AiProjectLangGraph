@@ -5,10 +5,10 @@ import plotly.express as px
 from sales_component import show_sales_dialog
 from api_utils import get_api
 
-
 def dashboard_page():
-    st.title("🚀 Dashboard")
-    st.write(f"환영합니다 👋 {st.session_state.get('user_email')}")
+    # Premium Gradient Header
+    st.markdown("<h1> Dashboard</h1>", unsafe_allow_html=True)
+    st.caption(f"환영합니다, {st.session_state.get('user_email')}님 | 실시간 매장 모니터링")
 
     st.divider()
 
@@ -19,8 +19,12 @@ def dashboard_page():
         return
     stores = pd.DataFrame(stores_data)
 
+    # [Session State 초기화] 지도와 리스트박스 연동을 위한 인덱스 관리
+    if "selected_store_idx" not in st.session_state:
+        st.session_state.selected_store_idx = 0
+
     # 2️⃣ 지점 현황 지도 & 리스트 (2단 레이아웃)
-    st.subheader("🗺️ 전국 매장 현황")
+    st.subheader("전국 매장 현황")
 
     col_map, col_list = st.columns([3, 1])
 
@@ -70,13 +74,22 @@ def dashboard_page():
         st.write("#### 🏪 매장 선택")
         st.caption("목록에서 선택하거나 지도를 클릭하세요.")
         
+        # [Sync] Session Index를 사용하여 선택 동기화
         selected_store_name = st.selectbox(
             "매장 목록",
             stores["store_name"],
-            label_visibility="collapsed"
+            index=st.session_state.selected_store_idx,
+            label_visibility="collapsed",
+            key="store_selectbox" # Key 부여
         )
         
-        store_row_manual = stores[stores["store_name"] == selected_store_name].iloc[0]
+        # Selectbox로 변경 시에도 Index 업데이트 (역방향 동기화)
+        # 현재 선택된 이름의 Index 찾기
+        current_idx = stores[stores["store_name"] == selected_store_name].index[0]
+        if current_idx != st.session_state.selected_store_idx:
+             st.session_state.selected_store_idx = int(current_idx) # int64 -> int 변환
+        
+        store_row_manual = stores.iloc[st.session_state.selected_store_idx]
         
         st.info(f"📍 **{store_row_manual['city']}**\n\n{store_row_manual['store_name']}")
         
@@ -89,14 +102,20 @@ def dashboard_page():
         if points:
             # 클릭된 첫 번째 점의 데이터 추출
             point_data = points[0]
-            # Plotly fig의 custom_data나 hover_data 순서에 따라 인덱스로 접근
-            # 여기서는 stores 데이터에서 index를 찾아 처리하는 것이 안전함
             point_index = point_data.get("point_index")
-            if point_index is not None:
-                store_row = stores.iloc[point_index]
+            
+            if point_index is not None and point_index != st.session_state.selected_store_idx:
+                # 상태 업데이트 후 리런 -> 리스트박스와 정보창이 갱신됨
+                st.session_state.selected_store_idx = int(point_index) # 안전하게 int 변환
+                st.rerun()
 
-                # 클릭 즉시 매출 다이얼로그 호출
-                show_sales_dialog(
-                    store_row['store_id'], store_row['store_name'])
+    # 5️⃣ [Auto-Open] 페이지 진입 시 자동으로 상세 다이얼로그 띄우기 (Showcase Mode)
+    # 다른 탭에 갔다가 돌아왔을 때도 뜨게 하려면 session_state 로직이 더 복잡해지므로,
+    # 여기서는 '최초 진입' 혹은 '새로고침' 시에만 뜨도록 처리.
+    if "dashboard_popup_shown" not in st.session_state:
+        st.session_state.dashboard_popup_shown = True
+        # 현재 선택된 매장 정보로 다이얼로그 오픈
+        current_store_row = stores.iloc[st.session_state.selected_store_idx]
+        show_sales_dialog(current_store_row['store_id'], current_store_row['store_name'])
 
     st.divider()

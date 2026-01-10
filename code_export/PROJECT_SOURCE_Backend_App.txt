@@ -1,0 +1,2991 @@
+Project Code Export - Category: Backend_App
+Generated for Gemini Canvas Analysis
+
+
+==================================================
+FILE_PATH: app\clients\genai.py
+==================================================
+
+import os
+import re
+from dotenv import load_dotenv
+from google import genai
+from google.genai.types import Tool, GenerateContentConfig, GoogleSearch
+from app.util.decorators import perform_async_logging
+
+load_dotenv()
+
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+@perform_async_logging
+async def genai_generate_text(prompt: str):
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[{"role": "user", "parts": [{"text": prompt}]}],
+        config={
+            "response_mime_type": "text/plain", # JSON 강제 제거 (유연성 확보)
+        }
+    )
+    # response.text가 None일 경우 안전하게 처리
+    result_text = response.text if response.text else ""
+    return result_text.strip()
+
+@perform_async_logging
+async def genai_generate_with_grounding(prompt: str):
+    """
+    Google Search Grounding을 사용하여 최신 정보를 검색하고 답변을 생성합니다.
+    (Dynamic Retrieval 설정)
+    """
+    # Google Search 도구 설정
+    google_search_tool = Tool(
+        google_search=GoogleSearch()
+    )
+
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[{"role": "user", "parts": [{"text": prompt}]}],
+        config=GenerateContentConfig(
+            tools=[google_search_tool],
+            response_modalities=["TEXT"],
+        )
+    )
+    
+    # Grounding 메타데이터 (소스 출처 등) 추출
+    citations = []
+    if response.candidates and response.candidates[0].grounding_metadata:
+        metadata = response.candidates[0].grounding_metadata
+        if metadata.grounding_chunks:
+            for chunk in metadata.grounding_chunks:
+                if chunk.web:
+                    title = chunk.web.title or "Link"
+                    uri = chunk.web.uri
+                    citations.append(f"- [{title}]({uri})")
+    
+    result_text = response.text if response.text else "답변을 생성하지 못했습니다."
+    
+    # 출처 목록이 있으면 하단에 추가
+    if citations:
+        # 중복 제거
+        unique_citations = list(dict.fromkeys(citations))
+        result_text += "\n\n**🌐 참고 출처:**\n" + "\n".join(unique_citations)
+        
+    return result_text.strip()
+
+
+
+==================================================
+FILE_PATH: app\clients\openai.py
+==================================================
+
+import os
+from dotenv import load_dotenv
+from openai import AsyncOpenAI
+from app.util.decorators import perform_async_logging
+
+load_dotenv()
+
+client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+@perform_async_logging
+async def openai_generate_text(prompt: str, model: str = "gpt-4o"):
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.7
+    )
+    return response.choices[0].message.content
+
+
+==================================================
+FILE_PATH: app\clients\tavily.py
+==================================================
+
+import os
+from dotenv import load_dotenv
+from app.util.decorators import perform_async_logging
+
+# 환경 변수 로드
+load_dotenv()
+
+# Tavily API 키 (하드코딩 된 키가 있다면 우선순위 주의, 여기선 .env 사용 권장)
+# .env에 TAVILY_API_KEY가 없으면 아래 하드코딩 된 키를 fallback으로 사용
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "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")
+
+@perform_async_logging
+async def tavily_search(query: str, max_results: int = 5):
+    """
+    Tavily API를 사용하여 웹 검색을 수행합니다.
+    검색 결과가 없으면(Context 부족 시) 쿼리를 단순화하여 재시도(Self-Correction)합니다.
+    
+    Returns:
+        str: 포맷팅된 검색 결과 문자열 (Title, Link, Snippet 포함)
+    """
+    try:
+        from tavily import TavilyClient
+        tavily = TavilyClient(api_key=TAVILY_API_KEY)
+        
+        # 1차 검색 시도 (구체적 쿼리)
+        # 예: "카페 프랜차이즈 [질문]" 형태로 문맥 보강
+        target_query = f"카페 프랜차이즈 {query}"
+        response = tavily.search(query=target_query, search_depth="basic", max_results=max_results)
+        raw_results = response.get('results', [])
+        
+        # 🔄 Self-Correction: 검색 결과가 없으면 쿼리 단순화 후 재시도
+        if not raw_results:
+            print(f"🔄 [Tavily Correction] '{target_query}' 결과 없음 -> '{query}' 재검색")
+            # 접두사 제거하고 질문 자체로 검색
+            response = tavily.search(query=query, search_depth="basic", max_results=max_results)
+            raw_results = response.get('results', [])
+        
+        # 결과 포맷팅
+        formatted_list = []
+        for item in raw_results:
+            title = item.get('title', '제목 없음')
+            url = item.get('url', '#')
+            content = item.get('content', '')
+            formatted_list.append(f"Title: {title}\nLink: {url}\nSnippet: {content}\n")
+        
+        if not formatted_list:
+             return "Tavily 검색 결과가 없습니다."
+        else:
+             return "[외부 웹 검색 결과 (Tavily)]\n" + "\n---\n".join(formatted_list)
+             
+    except Exception as e:
+        print(f"❌ Tavily 검색 실패: {e}")
+        return f"Tavily 검색 중 오류가 발생했습니다: {str(e)}"
+
+
+
+==================================================
+FILE_PATH: app\clients\weather.py
+==================================================
+
+import httpx
+from datetime import date, datetime
+
+# WMO 기상 코드 매핑 (Open-Meteo 기준)
+def map_wmo_code(code: int) -> str:
+    if code == 0:
+        return "맑음"
+    elif code in [1, 2, 3]:
+        return "구름"
+    elif code in [45, 48]:
+        return "안개"
+    elif code in [51, 53, 55, 61, 63, 65, 80, 81, 82]:
+        return "비"
+    elif code in [71, 73, 75, 77, 85, 86]:
+        return "눈"
+    elif code in [95, 96, 99]:
+        return "뇌우/비"
+    else:
+        return "흐림"
+
+async def fetch_weather_data(dates: list, lat: float = 37.5665, lon: float = 126.9780) -> dict:
+    """
+    Open-Meteo Archive API를 사용하여 실제 과거 날씨 데이터를 조회합니다.
+    API Key가 필요 없으며 무료입니다.
+    
+    Args:
+        dates (list): datetime.date 객체 또는 'YYYY-MM-DD' 문자열 리스트
+        lat (float): 위도 (기본값: 서울 시청)
+        lon (float): 경도 (기본값: 서울 시청)
+        
+    Returns:
+        dict: { "2024-01-01": "맑음", ... }
+    """
+    if not dates:
+        return {}
+
+    # 1. 날짜 포맷 통일 및 범위 설정
+    # 입력된 날짜 중 가장 과거와 가장 미래를 찾아 API 요청 범위를 정합니다.
+    sorted_dates = sorted([str(d) for d in dates])
+    start_date = sorted_dates[0]
+    end_date = sorted_dates[-1]
+
+    # 2. Open-Meteo API 호출 (과거 데이터 아카이브)
+    # daily=weather_code : 하루 대표 기상 코드만 요청
+    url = "https://archive-api.open-meteo.com/v1/archive"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "start_date": start_date,
+        "end_date": end_date,
+        "daily": "weather_code",
+        "timezone": "auto"
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, params=params, timeout=5.0)
+            response.raise_for_status()
+            data = response.json()
+
+        # 3. 결과 파싱 및 매핑
+        daily_data = data.get("daily", {})
+        time_list = daily_data.get("time", []) # ["2024-01-01", "2024-01-02", ...]
+        code_list = daily_data.get("weather_code", []) # [0, 3, 61, ...]
+
+        result_map = {}
+        for date_str, code in zip(time_list, code_list):
+            if code is not None:
+                result_map[date_str] = map_wmo_code(code)
+            else:
+                result_map[date_str] = "알수없음"
+
+        # 요청한 날짜들에 대해서만 필터링하여 반환 (API는 범위 전체를 주므로)
+        final_result = {d: result_map.get(d, "기록없음") for d in sorted_dates}
+        return final_result
+
+    except Exception as e:
+        print(f"❌ [Weather] API 호출 실패: {str(e)}")
+        # 실패 시 빈 값 대신 '알수없음' 반환하여 로직 에러 방지
+        return {d: "확인불가" for d in sorted_dates}
+
+
+
+==================================================
+FILE_PATH: app\core\cache.py
+==================================================
+
+import json
+import redis.asyncio as redis
+from datetime import date, datetime
+from typing import Any, Optional
+
+# ---------------------------------------------------------
+# [Redis 및 메모리 캐시 통합 관리] 
+# Redis가 연결 가능한 상태면 Redis를 쓰고, 아니면 메모리(Local)를 씁니다.
+# ---------------------------------------------------------
+
+# Redis 연결 설정 (기본값: localhost:6379 / DB: 0)
+REDIS_URL = "redis://localhost:6379/0"
+_redis_client = None
+_local_cache = {} # Redis 실패 시 사용될 백업 메모리 캐시
+
+async def get_redis():
+    """Redis 클라이언트 싱글톤 반환"""
+    global _redis_client
+    if _redis_client is None:
+        try:
+            _redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+            # 연결 확인용 테스트
+            await _redis_client.ping()
+            print("🚀 [Redis] 연결 성공 (localhost:6379)")
+        except Exception:
+            print("⚠️ [Redis] 연결 실패! 메모리 캐시(Local) 모드로 작동합니다.")
+            _redis_client = False # 연결 실패 표시
+    return _redis_client
+
+def _make_key(store_id: int, target_date: date) -> str:
+    """캐시 키 생성: 'report:1:2025-12-21'"""
+    return f"report:{store_id}:{target_date.isoformat()}"
+
+
+
+async def get_report_cache(store_id: int, target_date: date) -> Optional[dict]:
+    """캐시에서 데이터 조회 (Redis or Memory)"""
+    key = _make_key(store_id, target_date)
+    client = await get_redis()
+    
+    # 1. Redis에서 시도
+    if client:
+        try:
+            raw_data = await client.get(key)
+            if raw_data:
+                print(f"⚡ [Redis Hit] '{key}' 데이터를 불러왔습니다.")
+                data = json.loads(raw_data)
+                data["cached"] = True
+                return data
+        except Exception as e:
+            print(f"❌ [Redis Error] 조회 실패: {str(e)}")
+
+    # 2. Redis 실패 시 메모리에서 시도
+    if key in _local_cache:
+        print(f"✅ [Local Hit] '{key}' 데이터를 메모리에서 불러왔습니다.")
+        data = _local_cache[key]
+        data["cached"] = True
+        return data
+        
+    return None
+
+
+
+async def set_report_cache(store_id: int, data: Any, target_date: date, ttl: int = 86400):
+    """캐시에 데이터 저장 (Redis & Memory)"""
+    key = _make_key(store_id, target_date)
+    client = await get_redis()
+    
+    # JSON 직렬화
+    json_data = json.dumps(data, default=str)
+    
+    # 1. Redis 저장
+    if client:
+        try:
+            await client.set(key, json_data, ex=ttl)
+            print(f"💾 [Redis Set] '{key}' 저장 완료 (TTL: {ttl}s)")
+        except Exception as e:
+            print(f"❌ [Redis Error] 저장 실패: {str(e)}")
+
+    # 2. 메모리에도 백업 저장
+    _local_cache[key] = data
+    print(f"💾 [Local Set] '{key}' 메모리 저장 완료")
+
+async def get_report_object_cache(store_id: int, target_date: date) -> Optional[dict]:
+    """캐시에서 'report' 필드만 쏙 뽑아오기 (Service 간결화용)"""
+    cached = await get_report_cache(store_id, target_date)
+    return cached.get("report") if cached else None
+
+
+
+==================================================
+FILE_PATH: app\core\db.py
+==================================================
+
+
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+pool: AsyncConnectionPool
+import os
+from dotenv import load_dotenv
+load_dotenv()
+# Local DB 이건 안됨
+# database_url = os.getenv("DATABASE_URL", "postgresql://ai_user:1234@localhost:5432/ai_project")
+
+# Local DB 이건 됨
+# database_url = "postgresql://ai_user:1234@localhost:5432/ai_project"
+
+database_url = f"postgresql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT', '5432')}/{os.getenv('DB_NAME')}"
+
+# SQLAlchemy는 "postgresql://"만 주면 기본적으로 psycopg2를 찾으므로,
+# 설치된 psycopg(v3)를 사용하도록 스키마를 명시해줍니다.
+engine = create_engine(database_url.replace(
+    "postgresql://", "postgresql+psycopg://"), echo=True)
+
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+)
+
+base = declarative_base()
+# Import models directly so Base.metadata is populated for Alembic autogenerate.
+
+# 새 모델이 생기면 아래에 추가하세요.
+
+from app.menu.menu_schema import Menu  # noqa: F401
+from app.user.user_schema import User  # noqa: F401
+from app.store.store_schema import Store  # noqa: F401
+from app.review.review_schema import Review  # noqa: F401
+from app.order.order_schema import Order  # noqa: F401
+from app.sales.sales_schema import SalesDaily  # noqa: F401
+from app.report.report_schema import StoreReport  # noqa: F401
+from app.manual.manual_schema import Manual  # noqa: F401
+from app.inquiry.inquiry_schema import StoreInquiry  # noqa: F401
+from app.policy.policy_schema import Policy  # noqa: F401
+
+
+async def init_pool():
+    global pool
+    pool = AsyncConnectionPool(
+        conninfo=database_url,
+        kwargs={"row_factory": dict_row},
+        min_size=1,
+        max_size=50,
+        open=False,
+    )
+    await pool.open()
+    print("🔥 DB pool initialized")
+
+
+async def close_pool():
+    global pool
+    if pool:
+        await pool.close()
+        print("🧹 DB pool closed")
+
+
+def get_pool() -> AsyncConnectionPool:
+
+    if pool is None:
+        raise RuntimeError("DB pool is not initialized")
+    return pool
+
+
+async def fetch_one(sql: str, params=()) -> dict | None:
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, params)
+            return await cur.fetchone()
+
+
+async def fetch_all(sql: str, params=()) -> list[dict]:
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, params)
+            return await cur.fetchall()
+
+
+async def execute(sql: str, params=()):
+    async with pool.connection() as conn:
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(sql, params)
+            await conn.commit()
+        except Exception as e:
+            print("execute 실행 실패", e)
+            await conn.rollback()
+
+
+async def execute_return(sql: str, params=()) -> dict | None:
+    async with pool.connection() as conn:
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(sql, params)
+                row = await cur.fetchone()
+            await conn.commit()
+            return row
+        except Exception as e:
+            print("execute_insert 실행 실패", e)
+            await conn.rollback()
+
+# FastAPI Dependency Injection용
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+
+==================================================
+FILE_PATH: app\core\response.py
+==================================================
+
+from pydantic import BaseModel
+from typing import Generic, TypeVar
+
+T = TypeVar("T")
+
+class Response(BaseModel, Generic[T]):
+  success : bool
+  data : T | None = None
+  message: str | None
+
+
+
+==================================================
+FILE_PATH: app\inquiry\inquiry_agent.py
+==================================================
+
+import json
+from typing import Dict, Any
+from langchain_core.messages import SystemMessage, HumanMessage
+# [Refactoring] 분리된 노드들 Import (Clean Architecture)
+from app.inquiry.inquiry_schema import InquiryState
+from app.inquiry.nodes.router import router_node
+from app.inquiry.nodes.sales import diagnosis_node
+from app.inquiry.nodes.retrieval import manual_node, policy_node, web_search_node
+from app.inquiry.nodes.answer import answer_node_v2
+from app.inquiry.nodes.save import save_node
+from app.clients.genai import genai_generate_text
+
+
+# ===== [Phase 1] 검색 및 진단 실행 함수 (Entry Point) =====
+async def run_search_check(store_id: int, question: str) -> Dict[str, Any]:
+    """
+    1단계: 질문 분류 -> DB 검색 -> 유사도 평가 결과 반환
+    """
+    # 1. State 초기화
+    state = InquiryState(
+        store_id=store_id,
+        question=question,
+        category="",
+        sales_data={},
+        manual_data=[],
+        policy_data=[],
+        final_answer="",
+        inquiry_id=0,
+        diagnosis_result=""
+    )
+    
+    # 2. Router 실행
+    state = await router_node(state)
+    category = state["category"]
+    
+    # 3. 카테고리별 검색 실행
+    top_doc = None
+    min_dist = 1.0 
+    search_results = []
+    
+    if category == "sales":
+        # 매출은 사용자가 선택할 필요 없이 무조건 데이터 분석
+        state = await diagnosis_node(state)
+        min_dist = 0.0
+        sales_info = state.get("sales_data", {})
+        top_doc = {
+            "title": "매출 데이터 분석", 
+            "content": sales_info.get("summary_text", "분석 결과 없음"),
+            "search_params": {
+                "scope": sales_info.get("scope"),
+                "tables_used": sales_info.get("tables_used"),
+                "period": sales_info.get("period")
+            }
+        }
+        
+    elif category == "manual":
+        # 매뉴얼 검색 실행
+        state = await manual_node(state)
+        docs = state.get("manual_data", [])
+        meta = state.get("search_meta", {})
+        min_dist = meta.get("min_distance", 1.0)
+        
+        if docs:
+            first_line = docs[0].split("\n")[0]
+            content_preview = docs[0][len(first_line)+1:]
+            top_doc = {"title": first_line, "content": content_preview[:200] + "..."}
+            search_results = docs 
+
+    elif category == "policy":
+        # 정책 검색 실행
+        state = await policy_node(state)
+        docs = state.get("policy_data", [])
+        meta = state.get("search_meta", {})
+        min_dist = meta.get("min_distance", 1.0)
+        
+        if docs:
+            first_line = docs[0].split("\n")[0]
+            content_preview = docs[0][len(first_line)+1:]
+            top_doc = {"title": first_line, "content": content_preview[:200] + "..."}
+            search_results = docs
+
+    # [Feature] AI Contextual Check: 문서 적합성 판단
+    recommendation = {"indices": [], "comment": ""}
+    
+    if search_results and category != "sales":
+        try:
+            # 후보군 제목 + 앞부분 요약 추출
+            docs_summary = []
+            for i, c in enumerate(search_results):
+                lines = c.split('\n')
+                title = lines[0]
+                preview = lines[1][:50] + "..." if len(lines) > 1 else ""
+                docs_summary.append(f"[{i}] {title} ({preview})")
+            
+            rec_prompt = f"""
+            질문: "{question}"
+            
+            검색된 문서 목록:
+            {json.dumps(docs_summary, ensure_ascii=False, indent=2)}
+            
+            위 문서들이 질문에 답변하기에 '충분히 관련성'이 있는지 판단하세요.
+            [Output Format]
+            JSON으로만 응답하세요:
+            {{
+                "relevant_indices": [0, 2],  // 관련 문서 번호 (없으면 [])
+                "reason": "판단 이유"
+            }}
+            """
+            # 간단 추천 로직 (일단 간소화)
+            rec_res = await genai_generate_text(rec_prompt)
+            clean_json = rec_res.replace("```json", "").replace("```", "").strip()
+            rec_data = json.loads(clean_json)
+            
+            relevant_indices = rec_data.get("relevant_indices", [])
+            reason = rec_data.get("reason", "")
+            
+            if relevant_indices:
+                recommendation["indices"] = relevant_indices
+                recommendation["comment"] = f"✅ AI 추천: {reason}"
+            else:
+                recommendation["indices"] = []
+                recommendation["comment"] = f"⚠️ AI 판단: {reason}"
+                
+        except Exception as e:
+            print(f"⚠️ 추천 로직 에러: {e}")
+            recommendation["comment"] = "추천 시스템 일시 오류"
+
+    return {
+        "category": category,
+        "min_distance": min_dist,
+        "similarity_score": round((1 - min_dist) * 100, 1),
+        "top_document": top_doc,
+        "candidates": search_results,
+        "context_data": search_results if category != "sales" else [],
+        "recommendation": recommendation,
+        "sales_data": state.get("sales_data", {})
+    }
+
+
+# ===== [Phase 2] 최종 답변 생성 스트리밍 (Entry Point) =====
+async def run_final_answer_stream(store_id: int, question: str, category: str, mode: str, context_data: list):
+    """
+    2단계: 사용자 선택(DB/Web)에 따라 답변 생성
+    mode: 'db' (기존 데이터 사용) | 'web' (웹 검색 수행)
+    """
+    
+    yield json.dumps({"step": "init", "message": f"🚀 {mode.upper()} 모드로 답변 생성 시작..."}) + "\n"
+    
+    state = InquiryState(
+        store_id=store_id, 
+        question=question, 
+        category=category,
+        sales_data={}, manual_data=[], policy_data=[], final_answer="", inquiry_id=0, diagnosis_result=""
+    )
+
+    if category == "sales": # Sales Logic
+        # [Optimization] Phase 1에서 넘어온 데이터가 있으면 재사용 (LLM/DB 비용 절감)
+        if context_data and isinstance(context_data[0], dict):
+             yield json.dumps({"step": "sales", "message": "♻️ 기존 분석 데이터 활용 중..."}) + "\n"
+             state["sales_data"] = context_data[0]
+        else:
+             yield json.dumps({"step": "sales", "message": "📉 매출 데이터 분석 중..."}) + "\n"
+             state = await diagnosis_node(state)
+        
+        details = {
+            "type": "analysis", 
+            "summary": state["sales_data"].get("diagnosis_result"),
+            "sales_summary": state["sales_data"].get("summary_text", "")[:100] + "..."
+        }
+        yield json.dumps({"step": "sales", "message": "✅ 분석 완료", "details": details}) + "\n"
+        
+    else: # Retrieval Logic
+        if mode == "web":
+            yield json.dumps({"step": "web_search", "message": "🌐 외부 웹 검색 수행 중..."}) + "\n"
+            state = await web_search_node(state)
+            
+            web_res = state["manual_data"][0] if state["manual_data"] else ""
+            details = {"type": "web_result", "content": web_res}
+            yield json.dumps({"step": "web_search", "message": "✅ 외부 정보 수집 완료", "details": details}) + "\n"
+        else:
+            # Context Restore
+            key = "manual_data" if category == "manual" else "policy_data"
+            state[key] = context_data
+            yield json.dumps({"step": "check", "message": "📚 내부 DB 데이터 활용"}) + "\n"
+
+    # Answer Generation
+    yield json.dumps({"step": "answer", "message": "✍️ 답변 작성 중..."}) + "\n"
+    state = await answer_node_v2(state)
+    
+    # Save
+    yield json.dumps({"step": "save", "message": "💾 기록 저장 중..."}) + "\n"
+    state = await save_node(state)
+    
+    yield json.dumps({
+        "step": "done",
+        "message": "처리가 완료되었습니다.",
+        "final_answer": state["final_answer"],
+        "category": state["category"]
+    }) + "\n"
+
+
+==================================================
+FILE_PATH: app\inquiry\inquiry_router.py
+==================================================
+
+from fastapi import APIRouter
+from pydantic import BaseModel
+from app.inquiry.inquiry_agent import run_search_check
+from fastapi.responses import StreamingResponse
+from app.inquiry.inquiry_agent import run_final_answer_stream
+
+router = APIRouter(prefix="/inquiry", tags=["Inquiry"])
+
+
+class InquiryRequest(BaseModel):
+    """질문 요청 스키마"""
+    store_id: int
+    question: str
+
+class GenerateRequest(BaseModel):
+    store_id: int
+    question: str
+    category: str
+    mode: str # 'db' or 'web'
+    context_data: list = [] # DB 모드일 때 사용할 검색 결과 리스트
+
+
+@router.post("/check", response_model=dict)
+async def check_database_search(request: InquiryRequest):
+    """
+    [Steps 1] DB 검색 & 유사도 확인 API
+    질문을 받아 내부 DB(매뉴얼/정책)를 검색하고, 
+    가장 유사한 문서와 점수를 반환합니다. (답변 생성 X)
+    """
+    
+    result = await run_search_check(request.store_id, request.question)
+    return {
+        "success": True,
+        "data": result
+    }
+
+
+@router.post("/generate/stream")
+async def generate_answer_stream(request: GenerateRequest):
+    """
+    [Steps 2] 최종 답변 생성 (Streaming)
+    사용자가 선택한 모드(DB or Web)에 따라 최종 답변을 스트리밍합니다.
+    """
+    
+    return StreamingResponse(
+        run_final_answer_stream(
+            request.store_id, 
+            request.question, 
+            request.category, 
+            request.mode, 
+            request.context_data
+        ),
+        media_type="application/x-ndjson"
+    )
+
+
+@router.get("/history/{store_id}", response_model=list)
+async def get_inquiry_history(store_id: int, limit: int = 10):
+    """
+    매장별 질문 이력 조회
+    
+    Args:
+        store_id: 매장 ID
+        limit: 조회할 개수 (기본 10개)
+    
+    Returns:
+        질문/답변 이력 리스트
+    """
+    from app.core.db import fetch_all
+    
+    query = f"""
+    SELECT inquiry_id, category, question, answer, created_at
+    FROM store_inquiries
+    WHERE store_id = {store_id}
+    ORDER BY created_at DESC
+    LIMIT {limit}
+    """
+    
+    rows = await fetch_all(query)
+    
+    return [
+        {
+            "inquiry_id": row["inquiry_id"],
+            "category": row["category"],
+            "question": row["question"],
+            "answer": row["answer"],
+            "created_at": str(row["created_at"])
+        }
+        for row in rows
+    ]
+
+
+
+==================================================
+FILE_PATH: app\inquiry\inquiry_schema.py
+==================================================
+
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
+from sqlalchemy.sql import func
+from pydantic import BaseModel
+from app.core.db import base
+from typing import TypedDict, List, Dict, Any
+
+# --- LangGraph State ---
+class InquiryState(TypedDict):
+    """에이전트 상태 관리"""
+    store_id: int
+    question: str
+    category: str  # Router가 분류한 카테고리
+    
+    # 각 노드에서 수집한 데이터
+    sales_data: Dict[str, Any]
+    manual_data: List[str]
+    policy_data: List[str]
+    
+    # 최종 결과
+    final_answer: str
+    inquiry_id: int
+    diagnosis_result: str # 진단 결과 요약 (새로 추가)
+
+
+class StoreInquiry(base):
+    __tablename__ = "store_inquiries"
+
+    inquiry_id = Column(Integer, primary_key=True, index=True)
+    store_id = Column(Integer, ForeignKey("stores.store_id"), nullable=False)
+    
+    # 카테고리 (예: "sales", "manual", "policy") - 라우터가 분류한 값
+    category = Column(String(50), nullable=False)
+    
+    # 질문과 답변 (상세 내용이므로 Text 타입 사용)
+    question = Column(Text, nullable=False)
+    answer = Column(Text, nullable=False)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# --- Pydantic Models for API ---
+class InquiryCreate(BaseModel):
+    store_id: int
+    question: str
+
+class InquiryResponse(BaseModel):
+    inquiry_id: int
+    store_id: int
+    category: str
+    question: str
+    answer: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+
+
+
+==================================================
+FILE_PATH: app\inquiry\inquiry_service.py
+==================================================
+
+from app.core.db import SessionLocal
+from app.inquiry.inquiry_schema import StoreInquiry
+
+def save_inquiry(store_id: int, category: str, question: str, answer: str) -> int:
+    """
+    질문과 AI 답변을 DB에 저장
+    
+    Args:
+        store_id: 매장 ID
+        category: 질문 카테고리 (sales/manual/policy)
+        question: 질문 내용
+        answer: AI 답변
+    
+    Returns:
+        생성된 inquiry_id
+    """
+    db = SessionLocal()
+    try:
+        new_inquiry = StoreInquiry(
+            store_id=store_id,
+            category=category,
+            question=question,
+            answer=answer
+        )
+        db.add(new_inquiry)
+        db.commit()
+        db.refresh(new_inquiry)
+        return new_inquiry.inquiry_id
+    finally:
+        db.close()
+
+
+
+==================================================
+FILE_PATH: app\inquiry\nodes\answer.py
+==================================================
+
+import json
+from datetime import datetime, date
+from typing import Dict, Any, List
+
+# External App Imports
+from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+from app.inquiry.inquiry_schema import InquiryState
+
+# ===== Step 6: Answer Synthesis Node (답변 생성 - Analytical) =====
+async def answer_node_v2(state: InquiryState) -> InquiryState:
+    """수집한 데이터를 바탕으로 '표(Table)' 중심의 심층 분석 보고서 생성"""
+    question = state["question"]
+    category = state["category"]
+    
+    # 1. 컨텍스트 구성
+    context_text = ""
+    if category == "sales":
+        if "sales_data" in state and state["sales_data"]:
+             context_text = state["sales_data"].get("summary_text", "")
+    else:
+        # manual / policy 데이터 통합
+        docs = state.get("manual_data", []) + state.get("policy_data", [])
+        context_text = "\n\n".join(docs)
+    
+    # 2. 시스템 프롬프트 (Markdown Table 강제 -> 상황에 따라 유연하게)
+    system_prompt = (
+        "당신은 프랜차이즈 수석 데이터 분석가(Chief Analyst)입니다. "
+        "제공된 [분석용 데이터]를 기반으로 팩트에 입각한 인사이트를 제공하세요.\n\n"
+        
+        "[작성 규칙 - Strict Rules]\n"
+        "1. **Reference Citation (출처 명시)**: 답변 시 반드시 **참고한 매뉴얼/규정의 제목**과 핵심 내용을 인용해서 답변하세요. 예: '참고하신 [환불 규정 가이드]에 따르면...'\n"
+        "2. **Evidence Based**: [분석용 데이터]에 있는 내용을 최우선으로 근거로 삼으세요. 유사도가 높게 나온 문서가 있다면 해당 내용을 바탕으로 답변을 구성하세요.\n"
+        "3. **Markdown Table 필수**: Best/Worst 메뉴, 지점 비교 등 리스트 형태의 데이터는 **반드시 Markdown 표(Table)**로 작성하여 가독성을 높이세요. (컬럼 예: 순위, 메뉴명, 판매량, 매출액가, 리뷰 요약)\n"
+        "4. **화폐 단위**: 반드시 **원(KRW)**을 사용하세요.\n"
+        "5. **원인 분석**: 추측이 아니라 데이터에 근거한 분석만 수행하세요."
+    )
+    
+    # 메시지 구성
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=f"질문: {question}\n\n[분석용 데이터]\n{context_text}")
+    ]
+    
+    # 3. LLM 호출
+    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    response = await llm.ainvoke(messages)
+    
+    # 4. 결과 저장 (Structured JSON 생성)
+    # UI가 차트, 메트릭, 리뷰 근거를 렌더링할 수 있도록 JSON 구조화
+    final_output = {
+        "answer": response.content,
+        "category": category
+    }
+    
+    if category == "sales" and "sales_data" in state:
+        sd = state["sales_data"]
+        final_output["chart_data"] = sd.get("chart_data")
+        final_output["chart_setup"] = sd.get("chart_setup")
+        final_output["key_metrics"] = sd.get("key_metrics")
+        
+        # [Evidence] 분석에 사용된 리뷰 데이터 전달 (메뉴별 + 전체 최신)
+        # 중복 제거를 위해 리스트 합치기
+        all_reviews = sd.get("recent_reviews", []) + sd.get("menu_specific_reviews", [])
+        # 간단한 중복 제거 (내용 기준)
+        seen = set()
+        unique_reviews = []
+        for r in all_reviews:
+            if r.get('review_text') and r['review_text'] not in seen:
+                seen.add(r['review_text'])
+                unique_reviews.append(r)
+                
+        final_output["used_reviews"] = unique_reviews
+        
+        # UI는 'summary' 키가 없으면 'answer'를 텍스트로 출력하지 않음? 
+        # detail에 답변 내용 저장
+        final_output["detail"] = response.content
+    else:
+        final_output["detail"] = response.content
+
+    def json_serial(obj):
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        raise TypeError(f"Type {type(obj)} not serializable")
+
+    state["final_answer"] = json.dumps(final_output, ensure_ascii=False, default=json_serial)
+    
+    print(f"✅ [Analyst Answer] 분석 보고서 생성 완료 (Structured)")
+    return state
+
+
+
+==================================================
+FILE_PATH: app\inquiry\nodes\retrieval.py
+==================================================
+
+import json
+from typing import Dict, Any, List
+
+# External App Imports
+from app.clients.genai import genai_generate_with_grounding
+from app.core.db import fetch_all
+from app.inquiry.inquiry_schema import InquiryState
+
+# ===== Step 4: Manual RAG Node (매뉴얼 검색) =====
+async def manual_node(state: InquiryState) -> InquiryState:
+    """매뉴얼 DB에서 관련 문서 검색 (Vector Search)"""
+    if state["category"] != "manual":
+        return state
+    
+    question = state["question"]
+    
+    # OpenAI Embeddings로 질문 벡터화
+    from langchain_openai import OpenAIEmbeddings
+    embeddings_model = OpenAIEmbeddings(model="text-embedding-3-small")
+    question_vector = embeddings_model.embed_query(question)
+    
+    # pgvector 유사도 검색 (코사인 거리 기준 Top 3)
+    # distance가 0에 가까울수록 유사함
+    query = f"""
+    SELECT title, content, category,
+           embedding <=> '{question_vector}'::vector AS distance
+    FROM manuals
+    ORDER BY distance
+    LIMIT 5
+    """
+    
+    rows = await fetch_all(query)
+    
+    # 검색 결과 및 최소 거리 저장
+    min_distance = 1.0 # 기본값 (불일치)
+    if rows:
+        min_distance = min([r['distance'] for r in rows])
+        
+    state["manual_data"] = [
+        f"[{row['title']}] (유사도: {1 - row['distance']:.2f})\n{row['content']}"
+        for row in rows
+    ]
+    
+    if "search_meta" not in state: state["search_meta"] = {}
+    state["search_meta"] = {"min_distance": min_distance, "source": "manual_db"}
+    
+    print(f"📖 [Manual] 검색 완료 (Min Distance: {min_distance:.4f})")
+    return state
+
+
+# ===== Step 5: Policy RAG Node (정책 검색) =====
+async def policy_node(state: InquiryState) -> InquiryState:
+    """운영 정책 매뉴얼 검색 (Policies 테이블 조회)"""
+    if state["category"] != "policy":
+        return state
+    
+    question = state["question"]
+    
+    from langchain_openai import OpenAIEmbeddings
+    embeddings_model = OpenAIEmbeddings(model="text-embedding-3-small")
+    question_vector = embeddings_model.embed_query(question)
+    
+    query = f"""
+    SELECT title, content, category,
+           embedding <=> '{question_vector}'::vector AS distance
+    FROM policies
+    ORDER BY distance
+    LIMIT 5
+    """
+    
+    rows = await fetch_all(query)
+    
+    min_distance = 1.0
+    if rows:
+        min_distance = min([r['distance'] for r in rows])
+        
+    state["policy_data"] = [
+        f"[{row['title']}] (유사도: {1 - row['distance']:.2f})\n{row['content']}"
+        for row in rows
+    ]
+    
+    state["search_meta"] = {"min_distance": min_distance, "source": "policy_db"}
+    
+    print(f"📜 [Policy] 검색 완료 (Min Distance: {min_distance:.4f})")
+    return state
+
+
+# ===== Step 5.5: Web Search Node (외부 검색 - Google Grounding) =====
+async def web_search_node(state: InquiryState) -> InquiryState:
+    """내부 DB 검색 실패 시 외부 웹 검색 수행 (Google Gemini Grounding)"""
+    question = state["question"]
+    print(f"🌐 [Google Grounding] 내부 문서 부족 -> 구글 검색 수행: {question}")
+    
+    try:
+        # 구글 검색 Grounding을 통한 답변 생성
+        grounded_response = await genai_generate_with_grounding(question)
+        
+        # 결과 저장
+        state["manual_data"] = [f"[Google 검색 결과 기반 답변]\n{grounded_response}"]
+        state["search_meta"] = {"source": "web_search", "min_distance": 0.0}
+        
+    except Exception as e:
+        print(f"❌ Google Grounding 실패: {e}")
+        state["manual_data"] = [f"외부 검색 연결에 실패했습니다. (Error: {str(e)})"]
+        
+    return state
+
+
+
+==================================================
+FILE_PATH: app\inquiry\nodes\router.py
+==================================================
+
+import json
+from datetime import datetime, date
+from typing import Dict, Any, List
+
+# External App Imports
+from app.clients.genai import genai_generate_text
+from app.inquiry.inquiry_schema import InquiryState
+
+# ===== Router Node (질문 분류) =====
+async def router_node(state: InquiryState) -> InquiryState:
+    """
+    질문을 분석하여 카테고리 분류
+    - sales: 매출, 성과, 통계 관련
+    - manual: 기기 사용법, 레시피, 기술 지원
+    - policy: 운영 규정, 고객 응대, 본사 정책
+    """
+    question = state["question"]
+    
+    prompt = f"""
+    당신은 프랜차이즈 매장 질문 분류 AI입니다. 
+    질문의 핵심 의도를 파악하여 다음 3가지 중 하나로 분류하세요.
+
+    질문: "{question}"
+
+    1. sales (매출/데이터):
+       - 매출, 판매량, 주문 건수, 메뉴별 성과, 통계
+       - "지난주 매출 어때?", "가장 많이 팔린 메뉴는?"
+
+    2. manual (매뉴얼/기술):
+       - 기기 조작, 고장 수리, 청소 방법, 레시피
+       - "커피머신 청소 어떻게 해?", "와이파이 연결법"
+
+    3. policy (정책/외부정보):
+       - 매장 운영 규정, 환불/반품 정책, 고객 응대 매뉴얼
+       - **[중요]**: "맛집 추천", "날씨", "뉴스", "주변 상권" 등 외부 정보 검색이 필요한 경우도 'policy'로 분류
+
+    [Output Format]
+    JSON으로만 응답하세요:
+    {{"category": "sales" | "manual" | "policy", "reason": "분류 이유"}}
+    """ 
+    
+    # LLM 호출 (Gemini로 간소화)
+    try:
+        # 가볍고 빠른 gemai 사용
+        response = await genai_generate_text(prompt)
+        
+        # JSON 파싱
+        content = response.replace("```json", "").replace("```", "").strip()
+        data = json.loads(content)
+        category = data.get("category", "policy") # 기본값 policy
+        reason = data.get("reason", "")
+    except Exception as e:
+        print(f"⚠️ [Router] 분류 오류 (Fallback to policy): {e}")
+        category = "policy"
+        reason = "Error Parsing"
+        data = {}
+
+    print(f"🔀 [Router] Category Decision: {category} (Reason: {reason})")
+    
+    # State 업데이트
+    state["category"] = category
+    return state
+
+
+
+==================================================
+FILE_PATH: app\inquiry\nodes\sales.py
+==================================================
+
+import json
+from datetime import datetime, timedelta
+from typing import Dict, Any, List
+
+# External App Imports
+from app.clients.genai import genai_generate_text
+from app.core.db import fetch_all
+from app.inquiry.inquiry_schema import InquiryState
+
+# ===== Search Param Extraction Helper =====
+async def extract_search_params(question: str):
+    """
+    질문 분석 -> 분석 대상(매장들) & 필요한 데이터 소스(테이블) 결정
+    """
+    prompt = f"""
+    당신은 질문에서 핵심 키워드를 '있는 그대로 추출'하는 AI입니다. (번역/해석 금지)
+    질문을 분석하여 분석 대상 매장와 필요한 데이터를 JSON으로 반환하세요.
+    
+    질문: "{question}"
+    
+    [추출 규칙]
+    
+    1. target_store_codes: 분석 대상 매장명 (한글 키워드)
+       - ❌ 절대 영어로 번역하지 마세요. (No English Codes like 'SEOUL_GANGNAM')
+       - 질문에 있는 단어를 그대로 사용하세요.
+       - "강남점 매출" -> ["강남"]
+       - "서울이랑 부산 비교" -> ["서울", "부산"]
+       - "전체", "모든" -> ["ALL"]
+       
+    2. required_tables: 질문에 답변하기 위해 조회해야 할 테이블 리스트 (복수 선택 가능)
+       - "orders": 메뉴 판매량, 인기/비인기 메뉴 식별 (What)
+       - "sales_daily": 매출 추이, 날씨 정보 포함 (External Factor)
+       - "reviews": 판매/매출의 '원인(Why)' 분석, 고객 반응, 맛 평가 (이유/분석 요청 시 필수 포함)
+       
+    [테이블 선택 가이드]
+    - "왜 매출이 줄었어?" -> ["sales_daily", "reviews"] (추이 + 원인)
+    - "안 팔린 메뉴와 이유" -> ["orders", "reviews"] (메뉴 + 원인)
+    - "그냥 매출 보여줘" -> ["sales_daily"]
+       
+    [출력 예시]
+    {{
+        "target_store_codes": ["강남"], 
+        "required_tables": ["sales_daily", "reviews"],
+        "reason": "강남점의 매출 추이와 리뷰를 분석하기 위함"
+    }}
+    """
+    try:
+        response = await genai_generate_text(prompt)
+        clean_text = response.replace("```json", "").replace("```", "").strip()
+        parsed = json.loads(clean_text)
+        return parsed
+    except:
+        return {"target_store_codes": ["ALL"], "required_tables": ["sales_daily", "orders"], "reason": "Error parsing"}
+
+# ===== Step 3: Diagnosis Node (Multi-Store Support) =====
+async def diagnosis_node(state: InquiryState) -> InquiryState:
+    """
+    [Sales Analysis V2] 
+    1. 매장 Scope 확인 (서울/부산/강원/전체)
+    2. 최근 데이터 기준일(Anchor Date) 산출
+    3. 필요한 테이블만 골라서 동적 쿼리 (Orders / SalesDaily / Reviews)
+    """
+    if state["category"] != "sales":
+        return state
+        
+    print(f"🕵️‍♀️ [Diagnosis V2] 분석 시작: {state['question']}")
+    
+    # 1. 검색 파라미터 추출 (LLM)
+    search_params = await extract_search_params(state['question'])
+    
+    target_store_codes = search_params.get("target_store_codes", ["ALL"])
+    required_tables = search_params.get("required_tables", [])
+    date_range_str = search_params.get("date_range", "DATE(o.ordered_at) >= DATE('now', '-7 days')")
+    reason = search_params.get("reason", "")
+    
+    print(f"   🎯 타겟(List): {target_store_codes}, Tables: {required_tables}")
+    
+    # Store ID Mapping
+    collected_data = {
+        "scope": ", ".join(target_store_codes),
+        "tables_used": required_tables,
+        "period": "최근 7일 (자동 설정)" if "7 days" in date_range_str else "사용자 지정",
+        "reason": reason
+    }
+    
+    try:
+        # DB 연결 및 스토어 ID 조회 (공통)
+        store_codes = []
+        target_ids = []
+        # target_store_id = None # 단일 스토어용 (비전용)
+
+        q_stores = "SELECT store_id, store_name, region FROM stores"
+        all_stores = await fetch_all(q_stores)
+        print(f"🕵️ [Debug] DB Stores: {all_stores}") # 실제 DB에 어떻게 저장되어 있는지 확인
+        
+        # Scope Resolution (AI-Powered Matching)
+        if "ALL" in target_store_codes:
+            store_codes = [s['store_name'] for s in all_stores]
+            target_ids = [s['store_id'] for s in all_stores]
+        else:
+            # [AI Matcher] 단순 문자열 비교 대신 LLM이 판단 (한글/영어/별칭 완벽 대응)
+            match_prompt = f"""
+            당신은 데이터 매칭 전문가입니다. 
+            사용자가 언급한 '키워드'와 실제 DB에 있는 '매장 목록'을 보고, 의도에 맞는 매장의 ID를 찾아주세요.
+
+            1. 사용자 키워드: {target_store_codes}
+            2. DB 매장 목록: {json.dumps(all_stores, ensure_ascii=False)}
+
+            [매칭 규칙]
+            - "강남" -> "서울 강남점" (O)
+            - "SEOUL" -> "서울 강남점" (O)
+            - "본점" -> "서울 강남점" (만약 강남이 본점이라면 문맥상 판단, 불확실하면 Skip)
+            - "속초" -> "강원 속초점" (O)
+            
+            [Output JSON]
+            반드시 매칭된 store_id 리스트만 반환하세요.
+            {{"matched_ids": [1, 3]}}
+            """
+            try:
+                m_res = await genai_generate_text(match_prompt)
+                m_clean = m_res.replace("```json", "").replace("```", "").strip()
+                m_data = json.loads(m_clean)
+                target_ids = m_data.get("matched_ids", [])
+                
+                # 매칭된 ID로 이름 리스트 역추적
+                store_codes = [s['store_name'] for s in all_stores if s['store_id'] in target_ids]
+                print(f"🤖 [AI Matcher] Mapped {target_store_codes} -> IDs: {target_ids} ({store_codes})")
+                
+            except Exception as e:
+                print(f"⚠️ [AI Matcher] Error: {e}")
+                # Fallback: 기존 단순 매칭 (안전장치)
+                for code in target_store_codes:
+                    clean_code = code.replace(" ", "").strip()
+                    for s in all_stores:
+                        if clean_code and (clean_code in s['store_name'].replace(" ", "") or clean_code in (s['region'] or "")):
+                             if s['store_id'] not in target_ids:
+                                 target_ids.append(s['store_id'])
+                                 store_codes.append(s['store_name'])
+                            
+        # [UI Fix] 실제 매칭된 매장명 전달 (중요)
+        if store_codes:
+            collected_data["target_store_name"] = ", ".join(store_codes)
+        else:
+            collected_data["target_store_name"] = "전체 지점 (식별 실패)" if "ALL" not in target_store_codes else "전체 지점"
+        
+        # [Anchor Date Fix] 데이터가 존재하는 실제 마지막 날짜 확인
+        # 현재 시스템 시간(2026년)과 데이터 시간(2025년) 불일치 해결
+        anchor_date = None
+        q_max_date = "SELECT MAX(sale_date) as last_date FROM sales_daily"
+        if target_ids:
+             ids_str = ",".join(map(str, target_ids))
+             q_max_date += f" WHERE store_id IN ({ids_str})"
+             
+        try:
+            date_rows = await fetch_all(q_max_date)
+            if date_rows and date_rows[0]['last_date']:
+                anchor_date = date_rows[0]['last_date']
+                
+                # date 객체 확인 및 변환
+                if isinstance(anchor_date, str):
+                    curr_date = datetime.strptime(anchor_date, "%Y-%m-%d").date()
+                else:
+                    curr_date = anchor_date
+                    
+                start_date = curr_date - timedelta(days=6) # 1주일
+                # [CRITICAL FIX] Postgres 호환을 위해 명시적 날짜 문자열 사용
+                date_range_str = f"'{start_date}' AND '{curr_date}'"
+                print(f"📅 [Smart Period] 데이터 기반 기간 재설정: {start_date} ~ {curr_date}")
+            else:
+                print("⚠️ [Smart Period] 데이터가 없어 기본 기간(최근 7일) 사용")
+                # Fallback: Postgres Syntax
+                date_range_str = "CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE"
+        except Exception as e:
+            print(f"⚠️ [Smart Period] Error: {e}")
+            
+        print(f"🔍 [Diagnosis] Effective Date Range: {date_range_str}")
+
+        # (A) Sales Daily (매출 추이)
+        if "sales_daily" in required_tables:
+            where_sql = f"DATE(s.sale_date) BETWEEN {date_range_str}"
+            if target_ids:
+                ids_str = ",".join(map(str, target_ids))
+                where_sql += f" AND s.store_id IN ({ids_str})"
+            
+            q_sales = f"""
+                SELECT s.sale_date, st.store_name, SUM(s.total_sales) as total_sales, SUM(s.total_orders) as total_orders, MAX(s.weather_info) as weather_info
+                FROM sales_daily s
+                JOIN stores st ON s.store_id = st.store_id
+                WHERE {where_sql}
+                GROUP BY s.sale_date, st.store_name
+                ORDER BY s.sale_date ASC
+            """
+            rows = await fetch_all(q_sales)
+            collected_data["daily_trend"] = rows
+            
+            # Chart Data
+            chart_data = []
+            for r in rows:
+                chart_data.append({
+                    "date": r['sale_date'],
+                    "store": r['store_name'],
+                    "sales": float(r['total_sales']) if r['total_sales'] else 0,
+                    "orders": int(r['total_orders']) if r['total_orders'] else 0
+                })
+            collected_data["chart_data"] = chart_data
+
+        # (B) Orders (메뉴 분석)
+        # [Safety Lock] 메뉴 분석(Orders) 시 리뷰 강제 추가
+        if "orders" in required_tables:
+            if "reviews" not in required_tables:
+                print("⚠️ [Auto-Fix] 메뉴 분석을 위해 Reviews 테이블 강제 추가")
+                required_tables.append("reviews")
+                
+            where_sql = f"DATE(o.ordered_at) BETWEEN {date_range_str}"
+            if target_ids:
+                 ids_str = ",".join(map(str, target_ids))
+                 where_sql += f" AND o.store_id IN ({ids_str})"
+            
+            q_menu = f"""
+                SELECT 
+                    m.menu_id,
+                    m.menu_name, 
+                    m.category, 
+                    SUM(o.quantity) as qty, 
+                    SUM(o.total_price) as rev
+                FROM orders o
+                JOIN menus m ON o.menu_id = m.menu_id
+                WHERE {where_sql}
+                GROUP BY m.menu_id, m.menu_name, m.category
+                ORDER BY qty DESC
+                LIMIT 5
+            """
+            # 1. Top 5 Fetch
+            rows_top = await fetch_all(q_menu)
+            print(f"📊 [Diagnosis] Top Menus Fetched: {len(rows_top)}")
+            
+            # 2. Worst 5 Fetch
+            q_worst = q_menu.replace("DESC", "ASC").replace("LIMIT 5", "LIMIT 5")
+            rows_worst = await fetch_all(q_worst)
+            print(f"📊 [Diagnosis] Worst Menus Fetched: {len(rows_worst)}")
+            
+            # 3. Review Binding Logic
+            all_target_menus = rows_top + rows_worst
+            target_menu_ids = [r['menu_id'] for r in all_target_menus]
+            
+            menu_review_map = {} 
+            
+            if target_menu_ids:
+                 ids_str_menu = ",".join(map(str, set(target_menu_ids)))
+                 q_deep = f"""
+                    SELECT o.menu_id, r.rating, r.review_text, o.ordered_at
+                    FROM reviews r
+                    JOIN orders o ON r.order_id = o.order_id
+                    WHERE o.menu_id IN ({ids_str_menu}) 
+                    AND DATE(o.ordered_at) BETWEEN {date_range_str}
+                 """
+                 
+                 # [Critial Fix] 지점 필터링 누락 수정
+                 if target_ids:
+                     ids_str_store = ",".join(map(str, target_ids))
+                     q_deep += f" AND o.store_id IN ({ids_str_store})"
+                     
+                 q_deep += " ORDER BY r.created_at DESC"
+                 deep_reviews = await fetch_all(q_deep)
+                 print(f"💬 [Diagnosis] Bound Reviews Fetched: {len(deep_reviews)}")
+                 
+                 # UI 증거용 저장
+                 collected_data["menu_specific_reviews"] = deep_reviews
+                 
+                 for dr in deep_reviews:
+                     mid = dr['menu_id']
+                     if mid not in menu_review_map:
+                         menu_review_map[mid] = []
+                     menu_review_map[mid].append(f"⭐{dr['rating']}: {dr['review_text']}")
+            
+            # 4. Attach to Menu Data
+            for r in rows_top:
+                r['related_reviews'] = menu_review_map.get(r['menu_id'], [])[:10]
+            for r in rows_worst:
+                r['related_reviews'] = menu_review_map.get(r['menu_id'], [])[:10]
+
+            collected_data["top_selling_menus"] = rows_top
+            collected_data["low_selling_menus"] = rows_worst
+
+        # (C) Reviews (일반 조회)
+        if "reviews" in required_tables:
+            # Join with orders to get date & store filtering
+            where_sql = f"DATE(o.ordered_at) BETWEEN {date_range_str}"
+            if target_ids:
+                ids_str = ",".join(map(str, target_ids))
+                where_sql += f" AND o.store_id IN ({ids_str})"
+            
+            q_review = f"""
+                SELECT s.store_name, r.rating, r.review_text, o.ordered_at
+                FROM reviews r
+                JOIN orders o ON r.order_id = o.order_id
+                JOIN stores s ON o.store_id = s.store_id
+                WHERE {where_sql}
+                ORDER BY o.ordered_at DESC
+                LIMIT 500
+            """
+            rows = await fetch_all(q_review)
+            collected_data["recent_reviews"] = rows
+            print(f"💬 [Diagnosis] Recent Reviews Fetched: {len(rows)}")
+
+    except Exception as e:
+        print(f"❌ [Diagnosis] Critical Error: {e}")
+        collected_data["error"] = str(e)
+        collected_data["summary_text"] = f"데이터 조회 중 심각한 오류가 발생했습니다: {e}"
+        
+    # 3. Summary Generation (LLM을 위한 요약 텍스트)
+    # [Contextual Binding] 메뉴와 리뷰를 함께 제공
+    summary_text = f"=== 📊 분석 리포트 ({', '.join(store_codes)}) ===\n"
+    summary_text += f"기간: {date_range_str}\n\n"
+    
+    if "daily_trend" in collected_data:
+        summary_text += "[일별 매출 데이터 (지점별 구분)]\n"
+        for r in collected_data["daily_trend"]:
+            sales_val = float(r['total_sales']) if r['total_sales'] else 0
+            weather = r.get('weather_info', '-')
+            summary_text += f"- [{r['sale_date']}] {r['store_name']}: {sales_val:,.0f}원 (주문 {r['total_orders']}건, 날씨 {weather})\n"
+
+    if "top_selling_menus" in collected_data:
+        summary_text += "\n[통합 인기 메뉴 Top 5 (Best)]\n"
+        for m in collected_data["top_selling_menus"]:
+            summary_text += f"- {m['menu_name']} ({m['category']}): {m['qty']}개 판매, {int(m['rev']):,}원\n"
+            if 'related_reviews' in m and m['related_reviews']:
+                reviews_str = " / ".join(m['related_reviews'])
+                summary_text += f"  (🔍 고객 리뷰: {reviews_str})\n"
+
+    if "low_selling_menus" in collected_data:
+        summary_text += "\n[통합 판매 저조 메뉴 Top 5 (Worst)]\n"
+        for m in collected_data["low_selling_menus"]:
+            summary_text += f"- {m['menu_name']} ({m['category']}): {m['qty']}개 판매, {int(m['rev']):,}원\n"
+            if 'related_reviews' in m and m['related_reviews']:
+                reviews_str = " / ".join(m['related_reviews'])
+                summary_text += f"  (🔍 고객 리뷰: {reviews_str})\n"
+                
+    if "recent_reviews" in collected_data and isinstance(collected_data["recent_reviews"], list):
+        summary_text += "\n[최근 고객 리뷰 데이터 (매장 전체)]\n"
+        for r in collected_data["recent_reviews"][:20]: # 상위 20개만
+            s_name = r.get('store_name', '')
+            summary_text += f"- [{s_name}] ⭐{r.get('rating')}: {r.get('review_text')}\n"
+
+    collected_data["summary_text"] = summary_text
+    
+    # 5. Result for Chat UI Chart (Chart Data Formatting)
+    if "daily_trend" in collected_data:
+        collected_data["chart_setup"] = {"title": f"지점별 매출 추이 비교 ({', '.join(store_codes)})"}
+        total_sales = sum([float(r['total_sales']) for r in collected_data["daily_trend"] if r['total_sales']])
+        total_orders = sum([int(r['total_orders']) for r in collected_data["daily_trend"] if r['total_orders']])
+        
+        collected_data["key_metrics"] = {
+            "period": "최근 7일",
+            "total_sales": total_sales,
+            "total_orders": total_orders
+        }
+
+    # 간단 진단 코멘트 (타이틀용)
+    collected_data["diagnosis_result"] = f"분석 완료: {', '.join(store_codes)} (최근 7일)"
+
+    state["sales_data"] = collected_data
+    return state
+
+
+
+==================================================
+FILE_PATH: app\inquiry\nodes\save.py
+==================================================
+
+from app.inquiry.inquiry_schema import InquiryState
+from app.inquiry.inquiry_service import save_inquiry
+
+# ===== Step 7: Save Node (DB 저장) =====
+async def save_node(state: InquiryState) -> InquiryState:
+    """질문과 답변을 DB에 저장"""
+    inquiry_id = save_inquiry(
+        store_id=state["store_id"],
+        category=state["category"],
+        question=state["question"],
+        answer=state["final_answer"]
+    )
+    
+    state["inquiry_id"] = inquiry_id
+    print(f"💾 [Save] DB 저장 완료 (ID: {inquiry_id})")
+    
+    return state
+
+
+
+==================================================
+FILE_PATH: app\manual\manual_router.py
+==================================================
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from typing import List
+from app.core.db import get_db
+from app.manual.manual_schema import Manual, ManualResponse
+
+router = APIRouter(prefix="/manual", tags=["Manual"])
+
+@router.get("/get", response_model=List[ManualResponse])
+def get_manuals(db: Session = Depends(get_db)):
+    """모든 매뉴얼 조회"""
+    results = db.query(Manual).all()
+    # Pydantic 모델(ManualResponse)로 자동 변환되어 리턴됨 (Vector 등 제외됨)
+    return results
+
+
+
+==================================================
+FILE_PATH: app\manual\manual_schema.py
+==================================================
+
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, Text, DateTime
+from sqlalchemy.sql import func
+from pgvector.sqlalchemy import Vector
+from pydantic import BaseModel
+from typing import Optional, List
+from app.core.db import base
+
+class Manual(base):
+    __tablename__ = "manuals"
+
+    manual_id = Column(Integer, primary_key=True, index=True)
+    category = Column(String(50), nullable=False)   # 예: 기기 관리, 위생 관리, 포스 운영
+    title = Column(String(200), nullable=False)
+    content = Column(Text, nullable=False)
+    
+    # RAG 검색용 임베딩
+    embedding = Column(Vector(1536), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+
+# --- Pydantic Models for API ---
+class ManualCreate(BaseModel):
+    category: str
+    title: str
+    content: str
+
+
+
+class ManualResponse(ManualCreate):
+    manual_id: int
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+
+==================================================
+FILE_PATH: app\menu\menu_router.py
+==================================================
+
+from fastapi import APIRouter
+from app.menu.menu_service import select_menus_all
+
+# router = APIRouter(prefix="/menu", tags=["menu"])
+router = APIRouter()
+
+@router.get("/menu/get")
+async def get_menus_all():
+    results = await select_menus_all()
+    return results
+
+
+
+==================================================
+FILE_PATH: app\menu\menu_schema.py
+==================================================
+
+from pydantic import BaseModel
+from sqlalchemy import Column, Integer, String, Boolean, Numeric, Text
+from pgvector.sqlalchemy import Vector
+from app.core.db import base
+
+# ---------- API / JSON 용 Pydantic 스키마 ----------
+
+class MenuSchema(BaseModel):
+    menu_id: int | None = None
+    menu_name: str
+    category: str
+    base_price: float | None = None
+    cost_price: float | None = None
+    list_price: float | None = None
+    ingredients: str | None = None
+    recipe_steps: str | None = None
+    is_seasonal: bool = False
+
+# ---------- Alembic / DB 매핑용 SQLAlchemy 모델 ----------
+
+class Menu(base):
+    __tablename__ = "menus"
+
+    menu_id = Column(Integer, primary_key=True, index=True)
+    menu_name = Column(String(100), nullable=False, index=True)
+    category = Column(String(50), nullable=False)   # coffee / dessert
+    is_seasonal = Column(Boolean, default=False)
+
+    cost_price = Column(Numeric(10, 2), nullable=True)       # 원가
+    list_price = Column(Numeric(10, 2), nullable=True)       # 정가
+    
+    # 레시피 정보 (Merged from Recipe table)
+    ingredients = Column(Text, nullable=True)                # 상세 재료: 에스프레소 2샷, 우유 200ml...
+    recipe_steps = Column(Text, nullable=True)               # 제조 순서: 1. 샷 추출 2. 우유 스팀...
+
+    description = Column(String(500), nullable=True)         # 메뉴 설명 (임베딩 대상)
+    embedding = Column(Vector(1536), nullable=True)   # 메뉴 추천/검색용 임베딩
+
+
+
+==================================================
+FILE_PATH: app\menu\menu_service.py
+==================================================
+
+from app.core.db import fetch_all
+
+
+async def select_menus_all():
+    sql = "SELECT * FROM menus"
+    rows = await fetch_all(sql)
+    return rows
+
+
+
+==================================================
+FILE_PATH: app\order\order_router.py
+==================================================
+
+from fastapi import APIRouter
+from app.order.order_service import select_orders_by_store, select_daily_sales_by_store
+
+router = APIRouter(prefix="/order", tags=["order"])
+
+
+@router.get("/store/{store_id}")
+async def get_orders_by_store(store_id: int):
+    return await select_orders_by_store(store_id)
+
+
+@router.get("/store/{store_id}/daily_sales")
+async def get_daily_sales_by_store(store_id: int):
+    return await select_daily_sales_by_store(store_id)
+
+
+
+==================================================
+FILE_PATH: app\order\order_schema.py
+==================================================
+
+from pydantic import BaseModel
+from datetime import datetime
+from sqlalchemy import Column, Integer, Numeric, DateTime, ForeignKey
+from app.core.db import base
+
+# ---------- API / JSON 용 Pydantic 스키마 ----------
+
+
+class OrderSchema(BaseModel):
+    order_id: int
+    store_id: int
+    menu_id: int
+    quantity: int
+    total_price: float
+    ordered_at: datetime
+
+# ---------- Alembic / DB 매핑용 SQLAlchemy 모델 ----------
+
+
+class Order(base):
+    __tablename__ = "orders"
+
+    order_id = Column(Integer, primary_key=True, index=True)
+    store_id = Column(Integer, ForeignKey("stores.store_id"), nullable=False)
+    menu_id = Column(Integer, ForeignKey("menus.menu_id"), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    total_price = Column(Numeric(10, 2), nullable=False)
+    ordered_at = Column(DateTime, default=datetime.now, nullable=False)
+
+
+
+==================================================
+FILE_PATH: app\order\order_service.py
+==================================================
+
+from app.core.db import fetch_all
+
+
+async def select_orders_by_store(store_id: int):
+    sql = """
+        SELECT o.*, m.menu_name, m.category
+        FROM orders o
+        JOIN menus m ON o.menu_id = m.menu_id
+        WHERE o.store_id = %s
+        ORDER BY o.ordered_at DESC
+    """
+    rows = await fetch_all(sql, (store_id,))
+    return rows
+
+
+async def select_daily_sales_by_store(store_id: int):
+    sql = """
+        SELECT sale_date as order_date, total_sales as daily_revenue, total_orders as order_count, COALESCE(weather_info, '알수없음') as weather_info
+        FROM sales_daily
+        WHERE store_id = %s
+        ORDER BY sale_date ASC
+    """
+    rows = await fetch_all(sql, (store_id,))
+    return rows
+
+
+async def select_menu_sales_comparison(store_id: int, days: int = 7, target_date: str = None):
+    """
+    최근 N일 vs 이전 N일 메뉴별 판매량/매출 비교
+    Args:
+        store_id (int): 매장 ID
+        days (int): 비교할 기간 (기본 7일)
+        target_date (str): 기준 날짜 (YYYY-MM-DD), 없으면 CURRENT_DATE 사용
+    """
+    # 기준 날짜 처리 (SQL Injection 방지를 위해 파라미터 바인딩 사용)
+    base_date_expr = "CAST(%s AS DATE)" if target_date else "CURRENT_DATE"
+
+    sql = f"""
+        SELECT 
+            m.menu_name, 
+            m.category,
+            COALESCE(SUM(CASE WHEN o.ordered_at >= {base_date_expr} - make_interval(days => %s) AND o.ordered_at < {base_date_expr} + interval '1 day' THEN o.total_price ELSE 0 END), 0) as recent_revenue,
+            COUNT(CASE WHEN o.ordered_at >= {base_date_expr} - make_interval(days => %s) AND o.ordered_at < {base_date_expr} + interval '1 day' THEN 1 ELSE NULL END) as recent_count,
+            COALESCE(SUM(CASE WHEN o.ordered_at < {base_date_expr} - make_interval(days => %s) AND o.ordered_at >= {base_date_expr} - make_interval(days => %s) THEN o.total_price ELSE 0 END), 0) as prev_revenue,
+            COUNT(CASE WHEN o.ordered_at < {base_date_expr} - make_interval(days => %s) AND o.ordered_at >= {base_date_expr} - make_interval(days => %s) THEN 1 ELSE NULL END) as prev_count
+        FROM orders o
+        JOIN menus m ON o.menu_id = m.menu_id
+        WHERE o.store_id = %s
+        AND o.ordered_at >= {base_date_expr} - make_interval(days => %s)
+        AND o.ordered_at < {base_date_expr} + interval '1 day'
+        GROUP BY m.menu_name, m.category
+        ORDER BY recent_revenue DESC
+    """
+    
+    # 파라미터 리스트 구성
+    # target_date가 있으면 SQL 앞부분에 바인딩 필요
+    # 순서: (target_date...) -> days -> (target_date...) ...
+    # 복잡하므로, target_date를 params에 n번 넣어주는 방식보다는
+    # f-string으로 base_date_expr를 넣었지만, 안전하게 파라미터로 처리하려면 로직이 복잡해짐.
+    # 여기서는 target_date가 검증된 YYYY-MM-DD 문자열이라고 가정하고,
+    # 쿼리 파라미터 순서를 맞추는 정공법 사용.
+    
+    # Parameter order depends on how many times base_date_expr appears with %s.
+    # If target_date is None, base_date_expr is "CURRENT_DATE" (no param).
+    # If target_date is set, base_date_expr is "CAST(%s AS DATE)" (1 param).
+    
+    # Let's simplify: Use a CTE or variable in logic? No, simple param construction.
+    
+    p_date = [target_date] if target_date else []
+    
+    # Params corresponding to the SQL placeholders (%s)
+    # 1. recent_rev start: days
+    # 2. recent_cnt start: days
+    # 3. prev_rev end: days, start: days*2
+    # 4. prev_cnt end: days, start: days*2
+    # 5. WHERE store_id
+    # 6. WHERE start: days*2
+    
+    # Wait, because of base_date_expr expansion, we need to inject params properly.
+    # If target_date:
+    # SELECT ... CASE WHEN ... >= CAST(%s AS DATE) - ...
+    # This interleaving is tricky.
+    
+    # Alternative: Use a WITH clause to define the anchor date once.
+    
+    sql = """
+        WITH anchor AS (
+            SELECT CAST(%s AS DATE) as ref_date
+        )
+        SELECT 
+            m.menu_name, 
+            m.category,
+            COALESCE(SUM(CASE WHEN o.ordered_at >= (SELECT ref_date FROM anchor) - make_interval(days => %s) 
+                              AND o.ordered_at < (SELECT ref_date FROM anchor) + interval '1 day' THEN o.total_price ELSE 0 END), 0) as recent_revenue,
+            COUNT(CASE WHEN o.ordered_at >= (SELECT ref_date FROM anchor) - make_interval(days => %s) 
+                              AND o.ordered_at < (SELECT ref_date FROM anchor) + interval '1 day' THEN 1 ELSE NULL END) as recent_count,
+            COALESCE(SUM(CASE WHEN o.ordered_at < (SELECT ref_date FROM anchor) - make_interval(days => %s) 
+                              AND o.ordered_at >= (SELECT ref_date FROM anchor) - make_interval(days => %s) THEN o.total_price ELSE 0 END), 0) as prev_revenue,
+            COUNT(CASE WHEN o.ordered_at < (SELECT ref_date FROM anchor) - make_interval(days => %s) 
+                              AND o.ordered_at >= (SELECT ref_date FROM anchor) - make_interval(days => %s) THEN 1 ELSE NULL END) as prev_count
+        FROM orders o
+        JOIN menus m ON o.menu_id = m.menu_id
+        WHERE o.store_id = %s
+        AND o.ordered_at >= (SELECT ref_date FROM anchor) - make_interval(days => %s)
+        AND o.ordered_at < (SELECT ref_date FROM anchor) + interval '1 day'
+        GROUP BY m.menu_name, m.category
+        ORDER BY recent_revenue DESC
+    """
+    
+    # If target_date is None, use current date string
+    if not target_date:
+        from datetime import date
+        target_date = str(date.today())
+        
+    # Query structure analysis:
+    # 1. WITH anchor: %s (target_date)
+    # 2. recent_rev: %s (days)
+    # 3. recent_cnt: %s (days)
+    # 4. prev_rev: %s (days), %s (days*2)
+    # 5. prev_cnt: %s (days), %s (days*2)
+    # 6. WHERE store_id: %s
+    # 7. WHERE start: %s (days*2)
+    
+    params = (target_date, days, days, days, days * 2, days, days * 2, store_id, days * 2)
+    
+    rows = await fetch_all(sql, params)
+    return rows
+
+
+async def select_sales_by_day_type(store_id: int, days: int = 7, target_date: str = None):
+    """
+    최근 N일 vs 이전 N일의 '평일(Weekday)' vs '주말(Weekend)' 매출 비교
+    """
+    if not target_date:
+        from datetime import date
+        target_date = str(date.today())
+
+    sql = """
+        WITH anchor AS (
+            SELECT CAST(%s AS DATE) as ref_date
+        )
+        SELECT 
+            CASE WHEN EXTRACT(ISODOW FROM ordered_at) IN (6, 7) THEN 'Weekend' ELSE 'Weekday' END as day_type,
+            
+            SUM(CASE WHEN ordered_at >= (SELECT ref_date FROM anchor) - make_interval(days => %s) 
+                     AND ordered_at < (SELECT ref_date FROM anchor) + interval '1 day' THEN total_price ELSE 0 END) as recent_revenue,
+            COUNT(CASE WHEN ordered_at >= (SELECT ref_date FROM anchor) - make_interval(days => %s) 
+                     AND ordered_at < (SELECT ref_date FROM anchor) + interval '1 day' THEN 1 ELSE NULL END) as recent_count,
+            
+            SUM(CASE WHEN ordered_at < (SELECT ref_date FROM anchor) - make_interval(days => %s) 
+                     AND ordered_at >= (SELECT ref_date FROM anchor) - make_interval(days => %s) THEN total_price ELSE 0 END) as prev_revenue,
+            COUNT(CASE WHEN ordered_at < (SELECT ref_date FROM anchor) - make_interval(days => %s) 
+                     AND ordered_at >= (SELECT ref_date FROM anchor) - make_interval(days => %s) THEN 1 ELSE NULL END) as prev_count
+        
+        FROM orders
+        WHERE store_id = %s
+        AND ordered_at >= (SELECT ref_date FROM anchor) - make_interval(days => %s)
+        AND ordered_at < (SELECT ref_date FROM anchor) + interval '1 day'
+        GROUP BY 1
+    """
+    
+    # Query structure analysis:
+    # 1. WITH anchor: %s (target_date)
+    # 2. recent_rev: %s (days)
+    # 3. recent_cnt: %s (days)
+    # 4. prev_rev: %s (days), %s (days*2)
+    # 5. prev_cnt: %s (days), %s (days*2)
+    # 6. WHERE store_id: %s
+    # 7. WHERE start: %s (days*2)
+    
+    params = (target_date, days, days, days, days * 2, days, days * 2, store_id, days * 2)
+    rows = await fetch_all(sql, params)
+    return rows
+
+
+
+==================================================
+FILE_PATH: app\policy\policy_router.py
+==================================================
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from typing import List
+from app.core.db import get_db
+from app.policy.policy_schema import Policy, PolicyResponse
+
+router = APIRouter(prefix="/policy", tags=["Policy"])
+
+@router.get("/get", response_model=List[PolicyResponse])
+def get_policies(db: Session = Depends(get_db)):
+    """모든 정책/규정 조회"""
+    results = db.query(Policy).all()
+    # Pydantic 모델(PolicyResponse)로 자동 변환 (임베딩 필드 제외)
+    return results
+
+
+
+==================================================
+FILE_PATH: app\policy\policy_schema.py
+==================================================
+
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, Text, DateTime
+from sqlalchemy.sql import func
+from pgvector.sqlalchemy import Vector
+from pydantic import BaseModel
+from typing import Optional, List
+from app.core.db import base
+
+# ---------- Alembic / DB 매핑용 SQLAlchemy 모델 ----------
+class Policy(base):
+    __tablename__ = "policies"
+
+    policy_id = Column(Integer, primary_key=True, index=True)
+    category = Column(String(50), nullable=False)   # 예: 인사, 보안, 안전, 계약
+    title = Column(String(200), nullable=False)     # 정책 제목
+    content = Column(Text, nullable=False)          # 상세 정책 내용
+    
+    # RAG 검색을 위한 벡터 데이터 (OpenAI Embedding: 1536 dim)
+    embedding = Column(Vector(1536), nullable=True)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+# ---------- API / JSON 용 Pydantic 스키마 ----------
+class PolicyCreate(BaseModel):
+    category: str
+    title: str
+    content: str
+
+class PolicyResponse(BaseModel):
+    policy_id: int
+    category: str
+    title: str
+    content: str
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+
+==================================================
+FILE_PATH: app\report\report_graph.py
+==================================================
+
+import json
+from typing import Annotated, TypedDict, List, Dict, Any
+from datetime import date
+from langgraph.graph import StateGraph, END
+from app.core.db import SessionLocal
+from app.report.report_schema import StoreReport
+from app.order.order_service import select_daily_sales_by_store, select_menu_sales_comparison, select_sales_by_day_type
+from app.review.review_service import select_reviews_by_store
+from app.clients.genai import genai_generate_text
+from app.clients.weather import fetch_weather_data
+
+from app.core.db import fetch_all
+from datetime import datetime, timedelta
+
+from langgraph.graph.message import add_messages
+
+# 리스트를 덮어쓰지 않고 추가하기 위한 리듀서 함수
+def append_logs(left: List[str], right: List[str]) -> List[str]:
+    return left + right
+
+# 1. 그래프 상태(State) 정의
+class ReportState(TypedDict):
+    store_id: int
+    store_name: str
+    target_date: str # [Optional] 분석 기준 날짜 (YYYY-MM-DD)
+    sales_data: List[Dict[str, Any]]      # 이번주 매출 (최근 7일)
+    prev_sales_data: List[Dict[str, Any]] # 지난주 매출 (그 전 7일)
+    reviews_data: List[Dict[str, Any]]
+    menu_sales_data: List[Dict[str, Any]]
+    weather_data: Dict[str, str]
+    # [NEW] 집계 정합성을 위해 fetch 단계에서 계산한 값을 넘김
+    calculated_total_sales: float 
+    calculated_prev_sales: float
+    final_report: Dict[str, Any]
+    execution_logs: Annotated[List[str], append_logs]
+
+async def fetch_data_node(state: ReportState):
+    """DB에서 매출과 리뷰 데이터를 수집하는 노드"""
+    store_id = state["store_id"]
+    log = f"📊 [Fetch] '{state['store_name']}' 데이터 수집 시작"
+    print(log)
+
+    # 1. 기준 날짜(Anchor Date) 결정
+    # 시연 모드 or 과거 날짜 조회 지원
+    target_date_str = state.get("target_date")
+    
+
+    if not target_date_str:
+        # 타겟 날짜가 없으면 DB 최신 날짜 조회 (Simulation Mode)
+        try:
+            max_date_rows = await fetch_all(f"""
+                SELECT MAX(sale_date) as last_date 
+                FROM sales_daily 
+                WHERE store_id = {store_id}
+            """)
+            if max_date_rows and max_date_rows[0]['last_date']:
+                target_date_str = str(max_date_rows[0]['last_date'])
+                log += f"\n🕒 최신 데이터 날짜 기준: {target_date_str}"
+            else:
+                target_date_str = str(date.today())
+        except:
+            target_date_str = str(date.today())
+
+
+    ref_date = datetime.strptime(target_date_str, "%Y-%m-%d").date()
+    
+    # 2. 데이터 조회
+    # 메뉴별, 요일별 통계는 기준 날짜를 넘겨서 DB에서 정확히 계산
+    menu_stats = await select_menu_sales_comparison(store_id, days=7, target_date=target_date_str)
+    # day_stats = await select_sales_by_day_type(store_id, days=7, target_date=target_date_str) # [삭제] DB 호출 대신 직접 집계
+    reviews = await select_reviews_by_store(store_id) # 리뷰는 전체 가져와서 최신순 (TODO: 날짜 필터링?)
+
+    # 일별 매출은 전체를 가져온 뒤 파이썬에서 날짜 필터링 (DB 호출 횟수 절약)
+    all_sales = await select_daily_sales_by_store(store_id)
+    
+    # 3. 날짜 필터링 (이번주 vs 지난주)
+    # 이번주: ref_date 포함 최근 7일 (ref_date - 6 ~ ref_date)
+    # 지난주: 그 전 7일 (ref_date - 13 ~ ref_date - 7)
+    
+    curr_start = ref_date - timedelta(days=6)
+    curr_end = ref_date
+    prev_start = ref_date - timedelta(days=13)
+    prev_end = ref_date - timedelta(days=7)
+    
+    target_sales = []
+    prev_sales = []
+
+    # [NEW] 파이썬 내보내기 집계 (평일/주말 정합성 보장)
+    weekday_sales = {"recent": 0, "prev": 0}
+    weekend_sales = {"recent": 0, "prev": 0}
+    
+    for s in all_sales:
+        s_date = s['order_date'] # date object
+        rev = float(s['daily_revenue'])
+
+        # 이번주 데이터
+        if curr_start <= s_date <= curr_end:
+            target_sales.append(s)
+            if s_date.weekday() < 5: # 0~4: 평일
+                weekday_sales["recent"] += rev
+            else: # 5~6: 주말
+                weekend_sales["recent"] += rev
+
+        # 지난주 데이터
+        elif prev_start <= s_date <= prev_end:
+            prev_sales.append(s)
+            if s_date.weekday() < 5:
+                weekday_sales["prev"] += rev
+            else:
+                weekend_sales["prev"] += rev
+            
+    # 정렬 (날짜 오름차순) -> 그래프용
+    target_sales.sort(key=lambda x: x['order_date'])
+    prev_sales.sort(key=lambda x: x['order_date'])
+
+    # weather_map 구성
+    weather_map = {str(s['order_date']): s.get('weather_info', '알수없음') for s in target_sales}
+
+    return {
+        "sales_data": target_sales,
+        "prev_sales_data": prev_sales,
+        "reviews_data": reviews[:15], # 최신 15개만 사용
+        "menu_sales_data": menu_stats,
+        "weather_data": weather_map,
+        "calculated_total_sales": weekday_sales["recent"] + weekend_sales["recent"], # [NEW] 정확한 합계 전달
+        "calculated_prev_sales": weekday_sales["prev"] + weekend_sales["prev"],
+        "target_date": target_date_str, # State 업데이트
+        "execution_logs": [log, f"✅ [Fetch] 데이터 수집 및 정합성 검증 완료 (기준일: {target_date_str})"]
+    }
+
+async def analyze_data_node(state: ReportState):
+    """데이터 분석 및 수치적 근거 계산을 수행하는 노드"""
+    log = "🧠 [Analyze] 수치 데이터 계산 및 AI 분석 시작"
+    print(log)
+
+    sales = state["sales_data"]     # 이번주
+    prev_sales = state.get("prev_sales_data", []) # 지난주
+    reviews = state["reviews_data"]
+    menu_stats = state.get("menu_sales_data", [])
+    
+    # 1. 주간 매출 비교 (Weekly Comparison)
+    # [변경] fetch 단계에서 계산된 정확한 합계 사용 (재계산 X)
+    this_week_total = state["calculated_total_sales"]
+    prev_week_total = state.get("calculated_prev_sales", 0)
+    
+    avg_rev = this_week_total / len(sales) if sales else 0
+    
+    # 성장률 계산 (Growth Rate)
+    if prev_week_total > 0:
+        growth_rate = ((this_week_total - prev_week_total) / prev_week_total * 100)
+    else:
+        growth_rate = 100 if this_week_total > 0 else 0
+
+    avg_rating = sum(r['rating'] for r in reviews) / len(reviews) if reviews else 0
+
+    # 메뉴별 증감 분석 (매출 기준 내림차순 정렬된 상태)
+    processed_menus = []
+    for m in menu_stats:
+        rec_rev = float(m['recent_revenue'])
+        prev_rev = float(m['prev_revenue'])
+        change_pct = ((rec_rev - prev_rev) / prev_rev * 100) if prev_rev > 0 else (100 if rec_rev > 0 else 0)
+        
+        item = {
+            "menu": m['menu_name'],
+            "cat": m['category'],
+            "recent_rev": rec_rev,
+            "prev_rev": prev_rev,
+            "change_pct": round(change_pct, 1)
+        }
+        processed_menus.append(item)
+    
+    # 1. Top Selling (매출액 상위)
+    top_selling = sorted(processed_menus, key=lambda x: x['recent_rev'], reverse=True)[:5]
+
+    # 2. Top Dropping (감소폭 하위) - 역성장 메뉴
+    dropping_candidates = [m for m in processed_menus if m['prev_rev'] > 0]
+    worst_dropping = sorted(dropping_candidates, key=lambda x: x['change_pct'])[:5]
+
+    # UI용 원본 데이터 요약 (날짜, 매출만) + 날씨 추가
+    source_sales = []
+    for s in sales:
+        d_str = str(s['order_date'])
+        source_sales.append({
+            "date": d_str,
+            "revenue": float(s['daily_revenue']),
+            "weather": s.get('weather_info', "알수없음")
+        })
+
+    prompt = f"""
+    프랜차이즈 경영 전문가로서 다음 데이터를 분석하고 **수치적 근거**를 바탕으로 해결책을 제시해줘.
+    매장: {state['store_name']}
+    
+    [주간 매출 요약]
+    - 이번주 총 매출(7일): {int(this_week_total):,}원
+    - 지난주 총 매출(7일): {int(prev_week_total):,}원
+    - 주간 성장률(WoW): {growth_rate:+.1f}%
+    - 이번주 평균 별점: {avg_rating:.1f}점
+    
+    상세 매출 내역 (날씨 포함): {json.dumps(source_sales, ensure_ascii=False)}
+    상세 리뷰 내역: {json.dumps([{"rate": r['rating'], "txt": r['review_text']} for r in reviews], ensure_ascii=False)}
+    
+    [메뉴 분석]
+    잘 팔린 메뉴 (TOP 5): {json.dumps(top_selling, ensure_ascii=False)}
+    급감한 메뉴 (WORST 5): {json.dumps(worst_dropping, ensure_ascii=False)}
+
+    분석 시 다음 사항을 반드시 지켜줘:
+    1. **"이번주 매출이 지난주 대비 왜 변했는가?"**를 핵심 주제로 잡으세요. (성장 또는 하락의 원인 규명)
+    2. **날씨와 매출의 상관관계**를 반드시 언급하세요. 
+       - "지난주 대비 비오는 날이 많아 배달 매출이 늘었다" 등 구체적으로.
+    3. 수치적 근거(Top 5 메뉴명, 주말 매출 변동률 등)를 포함하여 마크다운 표로 시각화하세요.
+    
+    응답은 반드시 아래 태그 형식을 사용하여 작성할 것 (JSON 아님):
+
+    <SECTION:SALES_ANALYSIS>
+    주간 매출 비교, 날씨, 메뉴 데이터를 종합한 상세 분석 내용 (마크다운 표 포함)
+    </SECTION:SALES_ANALYSIS>
+
+    <SECTION:SUMMARY>
+    핵심 요약 (지난주 대비 변동 원인 포함 3줄)
+    </SECTION:SUMMARY>
+
+    <SECTION:STRATEGY>
+    다음주 매출 증대를 위한 날씨/트렌드 기반 마케팅 제안
+    </SECTION:STRATEGY>
+
+    <SECTION:IMPROVEMENT>
+    매장 운영 효율화 및 서비스 개선 제안
+    </SECTION:IMPROVEMENT>
+
+    <SECTION:RISK>
+    {{"risk_score": 80, "main_risks": ["리스크예시1", "리스크예시2"], "suggestion": "개선방안"}}
+    </SECTION:RISK>
+    """
+
+    raw_text = await genai_generate_text(prompt)
+    
+    # [NEW] Tag-based Parsing Logic (Robust)
+    import re
+    
+    def extract_section(tag, text):
+        pattern = f"<{tag}>(.*?)</{tag}>"
+        match = re.search(pattern, text, re.DOTALL)
+        return match.group(1).strip() if match else ""
+
+    try:
+        sales_analysis = extract_section("SECTION:SALES_ANALYSIS", raw_text)
+        summary = extract_section("SECTION:SUMMARY", raw_text)
+        strategy = extract_section("SECTION:STRATEGY", raw_text)
+        improvement = extract_section("SECTION:IMPROVEMENT", raw_text)
+        risk_text = extract_section("SECTION:RISK", raw_text)
+        
+        # Risk 섹션만 JSON 파싱 시도 (구조화된 데이터가 필요하므로)
+        risk_data = {"risk_score": 0, "main_risks": [], "suggestion": ""}
+        if risk_text:
+            try:
+                # 제어 문자 제거 후 파싱
+                risk_text_clean = re.sub(r'[\x00-\x1F\x7F]', '', risk_text)
+                risk_data = json.loads(risk_text_clean, strict=False)
+            except:
+                print(f"⚠️ Risk JSON 파싱 실패, 기본값 사용. Valid Text: {risk_text[:100]}")
+
+        # 필수 섹션이 비어있으면 실패로 간주 (최소 sales_analysis는 있어야 함)
+        if not sales_analysis:
+             raise ValueError("Main analysis section missing")
+
+        report_dict = {
+            "data_evidence": {"sales_analysis": sales_analysis},
+            "summary": summary,
+            "marketing_strategy": strategy,
+            "operational_improvement": improvement,
+            "risk_assessment": risk_data
+        }
+
+    except Exception as e:
+        print(f"❌ [Analyze] 태그 파싱 실패: {e}")
+        print("--- [AI Raw Output Start] ---")
+        print(raw_text)
+        print("--- [AI Raw Output End] ---")
+        
+        # Fallback
+        report_dict = {
+            "data_evidence": {"sales_analysis": "데이터 분석 실패 (형식 오류)"},
+            "summary": "리포트 생성 중 오류가 발생했습니다.",
+            "marketing_strategy": "",
+            "operational_improvement": "",
+            "risk_assessment": {"risk_score": 0, "main_risks": [], "suggestion": ""}
+        }
+    
+    # UI용 통계 데이터 및 소스 데이터 추가
+    report_dict["metrics"] = {
+        "total_rev": this_week_total,
+        "avg_rev": avg_rev,
+        "trend_percent": growth_rate, # 트렌드 대신 성장률 사용
+        "avg_rating": avg_rating,
+        "prev_total_rev": prev_week_total # 지난주 매출 추가
+    }
+    report_dict["source_data"] = {
+        "recent_sales": source_sales,
+        "review_count": len(reviews),
+        "top_selling_menus": top_selling,
+        "worst_dropping_menus": worst_dropping,
+    }
+
+    return {
+        "final_report": report_dict,
+        "execution_logs": [log, f"✅ [Analyze] 수치 근거 분석 완료 (주간 성장률: {growth_rate:+.1f}%)"]
+    }
+
+async def save_report_node(state: ReportState):
+    """최종 리포트를 DB에 저장하는 노드"""
+    log = "💾 [Save] 분석 결과 DB 저장 중"
+    report_dict = state["final_report"]
+
+    # 메트릭 및 소스 정보를 risk_assessment 내부에 병합하여 영구 저장
+    risk_info = report_dict.get('risk_assessment', {})
+    risk_info['metrics'] = report_dict.get('metrics')
+    risk_info['data_evidence'] = report_dict.get('data_evidence')
+    risk_info['source_data'] = report_dict.get('source_data')  # 원본 데이터 추가 저장
+
+    db_report = StoreReport(
+        store_id=state["store_id"],
+        report_date=date.today(),
+        report_type="AI_GRAPH_REPORT",
+        summary=report_dict['summary'],
+        marketing_strategy=report_dict['marketing_strategy'],
+        operational_improvement=report_dict['operational_improvement'],
+        risk_assessment=risk_info
+    )
+
+    # Risk 점수가 0이면 파싱 실패로 간주 -> DB 저장 건너뛰기 (재시도 유도)
+    risk_score_val = risk_info.get('risk_score') if isinstance(risk_info, dict) else 0
+    
+    # [Prevent Saving Bad Data] 
+    # 파싱 실패(0)거나 필수 필드가 없으면 저장하지 않음.
+    if not risk_score_val or risk_score_val == 0:
+        return {
+             "execution_logs": [log, "⚠️ [Skip Save] 불완전한 리포트(Risk Parsing Fail)로 인해 DB 저장을 생략합니다."]
+        }
+
+    with SessionLocal() as session:
+        session.query(StoreReport).filter_by(
+            store_id=state["store_id"],              
+            report_date=date.today()).delete()
+        session.add(db_report)
+        session.commit()
+
+    return {
+        "execution_logs": [log, "🏁 [Complete] 프로세스 종료"]
+    }
+
+def create_report_graph():
+    workflow = StateGraph(ReportState)
+    workflow.add_node("fetch_data", fetch_data_node)
+    workflow.add_node("analyze_data", analyze_data_node)
+    workflow.add_node("save_report", save_report_node)
+
+    workflow.set_entry_point("fetch_data")
+    workflow.add_edge("fetch_data", "analyze_data")
+    workflow.add_edge("analyze_data", "save_report")
+    workflow.add_edge("save_report", END)
+
+    return workflow.compile()
+
+# [Singleton 패턴] 서버 시작 시 한 번만 컴파일하여 재사용
+report_graph_app = create_report_graph()
+
+
+
+==================================================
+FILE_PATH: app\report\report_router.py
+==================================================
+
+from fastapi import APIRouter, HTTPException
+from app.report.report_schema import GenerateReportRequest
+from app.report.report_service import generate_ai_store_report, select_latest_report
+
+router = APIRouter(prefix="/report", tags=["report"])
+
+
+@router.post("/generate")
+async def post_generate_report(request: GenerateReportRequest):
+    """
+    AI 전략 리포트 생성 요청 (Request Body 사용 - store_id 포함)
+    """
+    result = await generate_ai_store_report(request.store_id, request.store_name, request.mode, request.target_date)
+    if not result:
+        raise HTTPException(status_code=500, detail="리포트 생성에 실패했습니다.")
+    return result
+
+
+@router.get("/latest/{store_id}")
+async def get_latest_report(store_id: int):
+    """
+    해당 지점의 가장 최근 리포트 조회
+    """
+    report = await select_latest_report(store_id)
+    if not report:
+        return None
+    return report
+
+@router.delete("/reset/{store_id}")
+async def delete_reports(store_id: int):
+    """
+    해당 지점의 모든 AI 리포트 데이터 삭제 (초기화)
+    """
+    from app.core.db import SessionLocal
+    from app.report.report_schema import StoreReport
+    
+    try:
+        # 1. DB 삭제
+        with SessionLocal() as session:
+            # 해당 지점 리포트 전체 삭제
+            session.query(StoreReport).filter(StoreReport.store_id == store_id).delete()
+            session.commit()
+            
+        # 2. Redis 캐시 삭제 (동기화)
+        from app.core.cache import get_redis
+        client = await get_redis()
+        if client:
+            # 해당 store_id의 모든 리포트 키 스캔
+            keys = await client.keys(f"report:{store_id}:*")
+            if keys:
+                await client.delete(*keys)
+                print(f"🗑️ [Redis] {store_id}번 지점 관련 캐시 {len(keys)}개 삭제 완료")
+
+        return {"status": "success", "message": f"{store_id}번 지점 리포트 초기화 완료"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+==================================================
+FILE_PATH: app\report\report_schema.py
+==================================================
+
+from pydantic import BaseModel
+from datetime import date, datetime
+from typing import Dict, Any, Optional
+from sqlalchemy import Column, Integer, String, Text, Date, ForeignKey, JSON
+from app.core.db import base
+
+# ---------- API / JSON 용 Pydantic 스키마 ----------
+
+class GenerateReportRequest(BaseModel):
+    store_id: int  # [NEW] Body에 포함
+    store_name: str
+    mode: str = "sequential"
+    target_date: Optional[str] = None # YYYY-MM-DD
+
+class StoreReportSchema(BaseModel):
+    report_id: int
+    store_id: int
+    report_date: date
+    report_type: str  # DAILY, WEEKLY, MONTHLY
+
+    summary: str
+    marketing_strategy: str
+    operational_improvement: str
+    risk_assessment: Dict[str, Any] | None = None  # JSON 데이터
+
+# ---------- Alembic / DB 매핑용 SQLAlchemy 모델 ----------
+
+
+class StoreReport(base):
+    __tablename__ = "store_reports"
+
+    report_id = Column(Integer, primary_key=True, index=True)
+    store_id = Column(Integer, ForeignKey("stores.store_id"), nullable=False)
+    report_date = Column(Date, default=date.today, nullable=False)
+
+    # 리포트 유형: DAILY(일간), WEEKLY(주간), MONTHLY(월간)
+    report_type = Column(String(20), nullable=False)
+
+    # 🤖 AI 분석 결과 저장 영역
+    summary = Column(Text, nullable=True)                   # 종합 3줄 요약
+    # 마케팅 제안 (타겟팅, 프로모션 등)
+    marketing_strategy = Column(Text, nullable=True)
+    operational_improvement = Column(
+        Text, nullable=True)   # 운영 개선 제안 (인력 배치, 재고 관리 등)
+
+    # 구조화된 분석 데이터 (JSON)
+    # 예: {"risk_score": 85, "churn_prediction": "high", "top_keywords": ["친절", "느림"]}
+    risk_assessment = Column(JSON, nullable=True)
+
+    created_at = Column(Date, default=datetime.now)
+
+
+
+==================================================
+FILE_PATH: app\report\report_service.py
+==================================================
+
+import json
+import asyncio
+import time
+import traceback
+
+from datetime import date, datetime, timedelta
+from sqlalchemy import func
+from app.core.db import SessionLocal, fetch_all
+from app.report.report_schema import StoreReport
+from app.clients.genai import genai_generate_text
+from app.order.order_service import select_daily_sales_by_store
+from app.review.review_service import select_reviews_by_store
+from app.core.cache import get_report_cache, set_report_cache, get_report_object_cache
+from app.report.report_graph import report_graph_app
+
+
+# ------------------------------------------------------------------
+# [Portfolio] Redis vs DB Speed Race Helper Functions (Flattened)
+# ------------------------------------------------------------------
+
+async def _measure_redis_speed(s_id: int, check_date: date):
+    """Redis 조회 속도 측정"""
+    start = time.perf_counter()
+    data = await get_report_cache(s_id, check_date)
+    dur = time.perf_counter() - start
+    return dur, data
+
+
+async def _measure_db_speed(s_id: int, check_date: date):
+    """DB 조회 속도 측정"""
+    start = time.perf_counter()
+    row = await select_latest_report(s_id)
+    data = None
+    if row and str(row['report_date']) == str(check_date):
+        data = row
+    dur = time.perf_counter() - start
+    return dur, data
+
+
+async def race_condition_check(s_id: int, t_date: str):
+    """
+    Redis와 DB의 조회 속도를 경쟁(Race)시키는 메인 로직.
+    asyncio.gather를 사용하여 두 태스크를 동시에 실행함.
+    """
+    logs = []
+    
+    if t_date:
+        check_date = datetime.strptime(t_date, "%Y-%m-%d").date()
+    else:
+        check_date = date.today()
+
+    # Async Execution (Race Start!) 🔫
+    # 헬퍼 함수들을 동시에 호출
+    (redis_time, redis_data), (db_time, db_data) = await asyncio.gather(
+        _measure_redis_speed(s_id, check_date), 
+        _measure_db_speed(s_id, check_date)
+    )
+    
+    data_found = redis_data if redis_data else db_data
+    
+    # 데이터가 어딘가에 있다면 Race Log 생성
+    if data_found:
+        winner = "Redis" if redis_time < db_time else "DB"
+        gap = db_time / redis_time if redis_time > 0 else 99.9
+        
+        logs.append(f"🏎️ [Race] {winner} Win! (Redis: {redis_time:.4f}s vs DB: {db_time:.4f}s)")
+        logs.append(f"⚡ [속도 비교] Redis가 DB보다 {gap:.1f}배 더 빠릅니다!")
+        
+        # DB 데이터만 있는 경우 포맷 맞춤 (UI 호환성)
+        if not redis_data and db_data:
+                # DB Row를 Dict 구조로 감싸기
+                data_found = {"report": db_data, "logs": [], "mode": "sequential"}
+
+    return data_found, logs
+
+
+# ------------------------------------------------------------------
+# Main Service Function
+# ------------------------------------------------------------------
+
+async def generate_ai_store_report(store_id: int, store_name: str, mode: str = "sequential", target_date: str = None):
+    """
+    LangGraph 프로세스 실행 (Sequential Graph)
+    캐시 확인 → 없으면 생성 → 캐시 저장
+    """
+    try:
+        print(f"🚀 [Service] '{store_name}' 리포트 생성 시작 ({target_date if target_date else 'Today'})...")
+
+        # 1. [Race] 캐시/DB 경쟁 조회 (Flattened 구조)
+        cached_data, race_logs = await race_condition_check(store_id, target_date)
+        
+        if cached_data:
+            print(f"♻️ [Service] '{store_name}' 리포트 조회 성공! (Race Winner Logic)")
+            
+            # 기존 로그에 레이스 로그 병합
+            final_logs = race_logs + cached_data.get("logs", [])
+            cached_data["logs"] = final_logs
+            cached_data["cached"] = True
+            return cached_data
+
+        # 2. 리포트 생성 (데이터 없음 -> AI 실행)
+        initial_state = {
+            "store_id": store_id,
+            "store_name": store_name,
+            "target_date": target_date, # [NEW] 분석 대상 날짜
+            "execution_logs": race_logs # Race 결과(없음)도 로그에 남김
+        }
+
+        # LangGraph 실행 (미리 컴파일된 싱글톤 앱 사용)
+        final_state = await report_graph_app.ainvoke(initial_state)
+
+        # DB에서 저장된 리포트 조회
+        report = await select_latest_report(store_id)
+
+        # 실행 로그 수집
+        logs = race_logs + final_state.get("execution_logs", [])
+
+        result = {
+            "report": report,
+            "logs": logs,
+            "mode": mode,
+            "cached": False
+        }
+
+        # 3. 생성된 리포트를 캐시에 저장 (Redis + DB는 이미 위에서 됨)
+        # target_date가 있으면 그걸로, 없으면 오늘 날짜로 key 생성
+        save_date = datetime.strptime(target_date, "%Y-%m-%d").date() if target_date else date.today()
+        
+        # [Prevent Caching Bad Data] 불량 리포트(Risk Score=0)는 Redis 저장 건너뛰기
+        risk_check = report.get("risk_assessment") if report else None
+        risk_score = risk_check.get("risk_score") if risk_check else 0
+        
+        if risk_score and risk_score > 0:
+            await set_report_cache(store_id, result, save_date)
+        else:
+            print("⚠️ [Cache Skip] 불량 리포트라 Redis 캐싱을 생략합니다.")
+
+        return result
+
+    except Exception as e:
+        print(f"❌ [Service] 에러 발생: {str(e)}")
+        traceback.print_exc()
+        return None
+
+
+async def select_latest_report(store_id: int):
+    """
+    지점의 가장 최신 리포트 조회 (DB Only)
+    """
+    sql = "SELECT * FROM store_reports WHERE store_id = %s ORDER BY report_date DESC, report_id DESC LIMIT 1"
+    rows = await fetch_all(sql, (store_id,))
+    return rows[0] if rows else None
+
+
+
+==================================================
+FILE_PATH: app\review\review_router.py
+==================================================
+
+from fastapi import APIRouter
+from app.review.review_service import select_reviews_by_store
+
+router = APIRouter(prefix="/review", tags=["review"])
+
+
+@router.get("/store/{store_id}")
+async def get_reviews_by_store(store_id: int):
+    return await select_reviews_by_store(store_id)
+
+
+
+==================================================
+FILE_PATH: app\review\review_schema.py
+==================================================
+
+from pydantic import BaseModel
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Index, Numeric, JSON
+from pgvector.sqlalchemy import Vector
+from app.core.db import base
+
+# ---------- API / JSON 용 Pydantic 스키마 ----------
+
+
+class ReviewSchema(BaseModel):
+    review_id: int
+    store_id: int
+    menu_id: int
+    rating: int
+    review_text: str
+    created_at: datetime
+    delivery_app: str
+    embedding: list[float] | None = None  # 1536 차원 임베딩
+
+
+
+
+# ---------- Alembic / DB 매핑용 SQLAlchemy 모델 ----------
+
+
+class Review(base):
+    __tablename__ = "reviews"
+
+    review_id = Column(Integer, primary_key=True, index=True)
+    store_id = Column(Integer, ForeignKey("stores.store_id"), nullable=False)
+    order_id = Column(Integer, ForeignKey("orders.order_id"),
+                      nullable=True)  # 어떤 주문에 대한 리뷰인지 연결
+    menu_id = Column(Integer, ForeignKey("menus.menu_id"), nullable=False)
+    rating = Column(Integer, nullable=False)  # 1~5
+    review_text = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    delivery_app = Column(String(50), nullable=True)  # 배민/쿠팡이츠 등
+
+    # AI 검색(Semantic Search)을 위한 임베딩은 조회 빈도가 높으므로 본 테이블에 유지
+    embedding = Column(Vector(1536), nullable=True)
+
+
+
+
+
+
+==================================================
+FILE_PATH: app\review\review_service.py
+==================================================
+
+from app.core.db import fetch_all
+
+
+async def select_reviews_by_store(store_id: int):
+    sql = """
+        SELECT r.*, m.menu_name, o.ordered_at
+        FROM reviews r
+        JOIN menus m ON r.menu_id = m.menu_id
+        LEFT JOIN orders o ON r.order_id = o.order_id
+        WHERE r.store_id = %s
+        ORDER BY r.created_at DESC
+    """
+    rows = await fetch_all(sql, (store_id,))
+    return rows
+
+
+
+==================================================
+FILE_PATH: app\sales\sales_schema.py
+==================================================
+
+from pydantic import BaseModel
+from datetime import date
+from sqlalchemy import Column, Integer, Date, Numeric, ForeignKey, UniqueConstraint, String
+from app.core.db import base
+
+# ---------- API / JSON 용 Pydantic 스키마 ----------
+
+
+class SalesDailySchema(BaseModel):
+    sales_id: int | None = None
+    store_id: int
+    sale_date: date
+    total_sales: float
+    total_orders: int
+
+# ---------- Alembic / DB 매핑용 SQLAlchemy 모델 ----------
+
+
+class SalesDaily(base):
+    __tablename__ = "sales_daily"
+
+    sales_id = Column(Integer, primary_key=True, index=True)
+    store_id = Column(Integer, ForeignKey("stores.store_id"), nullable=False)
+    sale_date = Column(Date, nullable=False)
+    total_sales = Column(Numeric(15, 2), default=0)
+    total_orders = Column(Integer, default=0)
+    
+    # 날씨 정보 추가 (비, 맑음 등)
+    weather_info = Column(String(50), nullable=True)
+
+    # 한 매장의 같은 날짜 데이터는 하나만 존재해야 함 (중복 방지)
+    __table_args__ = (
+        UniqueConstraint('store_id', 'sale_date', name='uix_store_date'),
+    )
+
+
+
+==================================================
+FILE_PATH: app\store\store_router.py
+==================================================
+
+from fastapi import APIRouter
+from app.store.store_service import select_stores_all
+
+router = APIRouter()
+
+@router.get("/store/get")
+async def get_stores_all():
+    results = await select_stores_all()
+    return results
+
+
+==================================================
+FILE_PATH: app\store\store_schema.py
+==================================================
+
+from pydantic import BaseModel
+from datetime import date
+from sqlalchemy import Column, Integer, String, Float, Date, Numeric
+from app.core.db import base
+
+# ---------- API / JSON 용 Pydantic 스키마 ----------
+
+
+class StoreSchema(BaseModel):
+    store_id: int
+    store_name: str
+    region: str
+    city: str
+    lat: float
+    lon: float
+    population_density_index: float | None = None
+    open_date: date | None = None
+    franchise_type: str | None = None
+
+
+# ---------- Alembic / DB 매핑용 SQLAlchemy 모델 ----------
+
+class Store(base):
+    __tablename__ = "stores"
+
+    store_id = Column(Integer, primary_key=True, index=True)
+    store_name = Column(String(100), nullable=False)
+    region = Column(String(50), nullable=False)           # 서울 / 대구 / 강원
+    city = Column(String(50), nullable=False)             # UI·지도 표시용
+    # 위도 (DOUBLE PRECISION)
+    lat = Column(Float, nullable=False)
+    # 경도 (DOUBLE PRECISION)
+    lon = Column(Float, nullable=False)
+    population_density_index = Column(Float, nullable=True)  # 도심 대비 인구밀도 지수
+    open_date = Column(Date, nullable=True)
+    franchise_type = Column(String(20), nullable=True)    # 직영 / 가맹
+
+
+
+==================================================
+FILE_PATH: app\store\store_service.py
+==================================================
+
+from app.core.db import fetch_all
+
+async def select_stores_all():
+    sql = "SELECT * FROM stores"
+    rows = await fetch_all(sql)
+    return rows
+
+
+==================================================
+FILE_PATH: app\user\user_router.py
+==================================================
+
+from fastapi import APIRouter, Body
+
+from app.user.user_schema import UserLogin, Users
+from app.user.user_service import user_insert, user_select_byemail
+
+router = APIRouter()
+
+@router.post("/user/create")
+async def user_create(body : Users):
+  response = await user_insert(body)
+  return response
+
+@router.post("/user/login")
+async def user_get_byemail(body : UserLogin):
+  response = await user_select_byemail(body)
+  return response
+
+
+# @router.post("/user/create")
+# async def user_create(user_id : str = Body(...) ):
+#   response = await user_insert(user_id)
+#   return response
+
+
+==================================================
+FILE_PATH: app\user\user_schema.py
+==================================================
+
+from pydantic import BaseModel
+
+from sqlalchemy import Column, Integer, String, DateTime, func
+
+from app.core.db import base
+
+
+# ---------- API / JSON 용 Pydantic 스키마 ----------
+
+class Users(BaseModel):
+  email: str
+  nickname: str
+  password_hash: str
+
+
+class UserLogin(BaseModel):
+  email: str
+
+
+# ---------- Alembic / DB 매핑용 SQLAlchemy 모델 ----------
+
+class User(base):
+  __tablename__ = "users"
+
+  id = Column(Integer, primary_key=True, index=True)
+  email = Column(String, unique=True, nullable=False, index=True)
+  password_hash = Column(String, nullable=False)
+  nickname = Column(String, nullable=False)
+  created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+
+==================================================
+FILE_PATH: app\user\user_service.py
+==================================================
+
+from app.core.db import execute_return, fetch_one
+from app.core.response import Response
+from app.user.user_router import Users
+from app.user.user_schema import UserLogin
+
+async def user_insert(body : Users):
+  user_id = await execute_return("""
+    insert into users (email, nickname)
+    values (%s, %s)
+    returning id;
+  """,(body.email, body.nickname))
+  print("user_insert user_id 값은?", user_id)
+  return "user_insert 완료 user_id는", user_id["id"]
+
+async def user_select_byemail(body : UserLogin):
+  row = await fetch_one("""
+    select id, email, nickname
+    from users
+    where email = %s
+  """,(body.email,))
+
+  if(row):
+    return Response(success=True, data=row["id"], message="user success")
+  return Response(success=False, data="",message="user not found")
+
+
+==================================================
+FILE_PATH: app\util\__init__.py
+==================================================
+
+"""
+유틸리티 모듈
+공통으로 사용되는 유틸리티 함수들
+"""
+
+
+
+
+
+
+
+
+==================================================
+FILE_PATH: app\util\decorators.py
+==================================================
+
+import time
+import functools
+
+def perform_async_logging(func):
+    """
+    [비동기 함수용]
+    실행 시간 측정 + 에러 핸들링을 자동으로 해주는 데코레이터
+    """
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        func_name = func.__name__
+        print(f"🚀 [Start] {func_name}")
+        start_time = time.perf_counter()
+        
+        try:
+            # 실제 함수 실행!
+            result = await func(*args, **kwargs)
+            return result
+            
+        except Exception as e:
+            # 에러 나면 여기서 잡힘
+            print(f"💥 [Error] {func_name} 중단: {e}")
+            return None # 혹은 raise e
+            
+        finally:
+            # 성공하든 실패하든 무조건 실행
+            duration = time.perf_counter() - start_time
+            print(f"🏁 [End] {func_name} (⏱️ {duration:.3f}s)")
+            
+    return wrapper
+

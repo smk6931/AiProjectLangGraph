@@ -2,10 +2,13 @@ import streamlit as st
 import pandas as pd
 from api_utils import get_api
 
-
 def review_page():
-    st.title("💬 리뷰 관리")
-    st.write("지점별 리뷰를 확인하고 분석할 수 있는 페이지입니다.")
+    # 스타일 임포트
+    try: from styles import show_metric_card
+    except ImportError: from ui.styles import show_metric_card
+
+    st.markdown("<h1>💬 Customer Reviews</h1>", unsafe_allow_html=True)
+    st.caption("Review Analysis & Sentiment Monitoring")
     st.divider()
 
     # 1. 지점 데이터 로드
@@ -41,12 +44,11 @@ def review_page():
     # 통계 요약
     col1, col2, col3 = st.columns(3)
     avg_rating = df_reviews['rating'].mean()
-    col1.metric("평균 평점", f"{avg_rating:.1f} / 5.0")
-    col2.metric("총 리뷰 수", f"{len(df_reviews)}건")
+    show_metric_card(col1, "평균 평점", f"{avg_rating:.1f} / 5.0")
+    show_metric_card(col2, "총 리뷰 수", f"{len(df_reviews)}건")
 
-    high_rating_ratio = (
-        len(df_reviews[df_reviews['rating'] >= 4]) / len(df_reviews)) * 100
-    col3.metric("긍정 리뷰 비율", f"{high_rating_ratio:.1f}%")
+    high_rating_ratio = (len(df_reviews[df_reviews['rating'] >= 4]) / len(df_reviews)) * 100
+    show_metric_card(col3, "긍정 리뷰 비율", f"{high_rating_ratio:.1f}%")
 
     st.divider()
 

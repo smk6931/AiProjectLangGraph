@@ -1,0 +1,1952 @@
+Project Code Export - Category: Frontend_UI
+Generated for Gemini Canvas Analysis
+
+
+==================================================
+FILE_PATH: ui\api_utils.py
+==================================================
+
+# ui/api_utils.py
+import streamlit as st
+import requests
+
+API_BASE_URL = "http://localhost:8080"
+
+
+def get_api(endpoint: str, params: dict = None):
+    """
+    HTTP GET 요청 공통 함수
+    """
+    try:
+        url = f"{API_BASE_URL}{endpoint}"
+        response = requests.get(url, params=params)
+
+        if response.status_code == 200:
+            return response.json()
+        elif response.status_code == 404:
+            st.warning("데이터를 찾을 수 없습니다. (404)")
+            return None
+        else:
+            st.error(f"API 오류 발생: {response.status_code}")
+            return None
+
+    except requests.exceptions.ConnectionError:
+        st.error("🔌 백엔드 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인하세요.")
+        return None
+    except Exception as e:
+        st.error(f"알 수 없는 오류 발생: {e}")
+        return None
+
+
+def post_api(endpoint: str, json_data: dict = None):
+    """
+    HTTP POST 요청 공통 함수
+    """
+    try:
+        url = f"{API_BASE_URL}{endpoint}"
+        response = requests.post(url, json=json_data)
+
+        if response.status_code in [200, 201]:
+            return response.json()
+        else:
+            # 에러 응답 처리 (백엔드 상세 메시지가 있으면 표시)
+            error_detail = response.json().get('detail', response.status_code)
+            st.error(f"요청 실패: {error_detail}")
+            return None
+
+    except requests.exceptions.ConnectionError:
+        st.error("🔌 백엔드 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인하세요.")
+        return None
+    except Exception as e:
+        st.error(f"알 수 없는 오류 발생: {e}")
+        return None
+
+
+
+==================================================
+FILE_PATH: ui\dashboard.py
+==================================================
+
+# app/ui/dashboard.py
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+from sales_component import show_sales_dialog
+from api_utils import get_api
+
+def dashboard_page():
+    # Premium Gradient Header
+    st.markdown("<h1> Dashboard</h1>", unsafe_allow_html=True)
+    st.caption(f"환영합니다, {st.session_state.get('user_email')}님 | 실시간 매장 모니터링")
+
+    st.divider()
+
+    # 1️⃣ 데이터 로드
+    stores_data = get_api("/store/get")
+    if not stores_data:
+        st.warning("매장 데이터를 불러올 수 없습니다.")
+        return
+    stores = pd.DataFrame(stores_data)
+
+    # [Session State 초기화] 지도와 리스트박스 연동을 위한 인덱스 관리
+    if "selected_store_idx" not in st.session_state:
+        st.session_state.selected_store_idx = 0
+
+    # 2️⃣ 지점 현황 지도 & 리스트 (2단 레이아웃)
+    st.subheader("전국 매장 현황")
+
+    col_map, col_list = st.columns([3, 1])
+
+    with col_map:
+        # Plotly Scatter Map 생성
+        fig = px.scatter_mapbox(
+            stores,
+            lat="lat",
+            lon="lon",
+            text="city",  # 텍스트로 표시할 컬럼 (예: 서울, 부산)
+            hover_name="store_name",
+            hover_data={"city": True, "lat": False,
+                        "lon": False, "store_id": True},
+            color_discrete_sequence=["#FF4B4B"],
+            zoom=6,
+            height=600  # 세로로 긴 지도 비율에 맞춤
+        )
+
+        # 텍스트 스타일 및 마커 설정
+        fig.update_traces(
+            mode='markers+text',
+            textposition='top right',
+            textfont=dict(size=11, color="white"),
+            marker=dict(size=12)
+        )
+
+        # 지도 스타일 설정 (고급스러운 어두운 테마)
+        fig.update_layout(
+            mapbox_style="carto-darkmatter",
+            margin={"r": 0, "t": 0, "l": 0, "b": 0},
+            clickmode='event+select',
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="white")
+        )
+
+        # 지도 출력 및 선택 이벤트 감지 (마우스 휠 줌 활성화)
+        selected_points = st.plotly_chart(
+            fig, 
+            use_container_width=True, 
+            on_select="rerun",
+            config={'scrollZoom': True, 'displayModeBar': False}
+        )
+
+    # 3️⃣ 우측 매장 리스트
+    with col_list:
+        st.write("#### 🏪 매장 선택")
+        st.caption("목록에서 선택하거나 지도를 클릭하세요.")
+        
+        # [Sync] Session Index를 사용하여 선택 동기화
+        selected_store_name = st.selectbox(
+            "매장 목록",
+            stores["store_name"],
+            index=st.session_state.selected_store_idx,
+            label_visibility="collapsed",
+            key="store_selectbox" # Key 부여
+        )
+        
+        # Selectbox로 변경 시에도 Index 업데이트 (역방향 동기화)
+        # 현재 선택된 이름의 Index 찾기
+        current_idx = stores[stores["store_name"] == selected_store_name].index[0]
+        if current_idx != st.session_state.selected_store_idx:
+             st.session_state.selected_store_idx = int(current_idx) # int64 -> int 변환
+        
+        store_row_manual = stores.iloc[st.session_state.selected_store_idx]
+        
+        st.info(f"📍 **{store_row_manual['city']}**\n\n{store_row_manual['store_name']}")
+        
+        if st.button("📊 상세 보기", type="primary", use_container_width=True):
+             show_sales_dialog(store_row_manual['store_id'], store_row_manual['store_name'])
+
+    # 4️⃣ 지도 클릭 이벤트 처리
+    if selected_points and "selection" in selected_points:
+        points = selected_points["selection"]["points"]
+        if points:
+            # 클릭된 첫 번째 점의 데이터 추출
+            point_data = points[0]
+            point_index = point_data.get("point_index")
+            
+            if point_index is not None and point_index != st.session_state.selected_store_idx:
+                # 상태 업데이트 후 리런 -> 리스트박스와 정보창이 갱신됨
+                st.session_state.selected_store_idx = int(point_index) # 안전하게 int 변환
+                st.rerun()
+
+    st.divider()
+
+
+
+==================================================
+FILE_PATH: ui\debug_utils.py
+==================================================
+
+import streamlit as st
+
+
+def render_session_state_viewer():
+    """
+    st.session_state의 내용을 토글 버튼으로 보여주거나 숨기는 디버그 컴포넌트
+    """
+    # 세션 상태에 토글 여부 저장
+    if "show_session_debug" not in st.session_state:
+        st.session_state.show_session_debug = False
+
+    st.divider()
+
+    # 토글 버튼 (Flip-Flop)
+    # cols = st.columns([1, 4])
+    # with cols[0]:
+    #     if st.button("🛠️"):
+    #         st.session_state.show_session_debug = not st.session_state.show_session_debug
+    #         st.rerun()
+
+    # # 표시 영역
+    # if st.session_state.show_session_debug:
+    #     with st.expander("🔍 Current Session State Data", expanded=True):
+    #         # 딕셔너리 형태로 변환하여 JSON 출력
+    #         state_dict = {k: v for k, v in st.session_state.items()
+    #                       if k != "show_session_debug"}
+    #         st.json(state_dict)
+
+    #         # 정보성 텍스트
+    #         st.caption("이 패널은 개발 중에만 활성화하여 세션 상태를 추적할 수 있습니다.")
+
+
+
+==================================================
+FILE_PATH: ui\guide_page.py
+==================================================
+
+import streamlit as st
+import pandas as pd
+from api_utils import get_api
+
+def guide_page():
+    st.title("📚 매장 운영 가이드")
+    st.markdown("매장 운영에 필요한 **매뉴얼**과 **사내 규정**을 조회할 수 있습니다.")
+
+    # 탭 생성
+    tab1, tab2 = st.tabs(["🛠️ 업무 매뉴얼", "📋 사내 규정 (Policy)"])
+
+    # --- TAB 1: 매뉴얼 ---
+    with tab1:
+        st.subheader("업무 매뉴얼 조회")
+        
+        # 검색창
+        search_query_manual = st.text_input("🔍 매뉴얼 검색 (키워드 입력)", key="manual_search")
+        
+        api_res = get_api("/manual/get")
+        
+        if api_res:
+            df_manual = pd.DataFrame(api_res)
+            
+            # 검색 필터
+            if search_query_manual:
+                mask = df_manual.apply(lambda x: search_query_manual in str(x['title']) or search_query_manual in str(x['content']), axis=1)
+                df_manual = df_manual[mask]
+            
+            if not df_manual.empty:
+                # 카테고리별 그룹핑
+                categories = df_manual['category'].unique()
+                
+                for cat in categories:
+                    st.markdown(f"### 📂 {cat}")
+                    cat_items = df_manual[df_manual['category'] == cat]
+                    
+                    for _, row in cat_items.iterrows():
+                        with st.expander(f"**{row['title']}**"):
+                            st.write(row['content'])
+                            st.caption(f"Last Updated: {row.get('updated_at', row.get('created_at', ''))}")
+            else:
+                st.info("검색 결과가 없습니다.")
+        else:
+            st.warning("매뉴얼 데이터를 불러올 수 없습니다.")
+
+    # --- TAB 2: 사내 규정 ---
+    with tab2:
+        st.subheader("사내 규정 및 정책")
+        
+        # 검색창
+        search_query_policy = st.text_input("🔍 규정 검색 (키워드 입력)", key="policy_search")
+        
+        api_res_poly = get_api("/policy/get")
+        
+        if api_res_poly:
+            df_policy = pd.DataFrame(api_res_poly)
+            
+            # 검색 필터
+            if search_query_policy:
+                mask = df_policy.apply(lambda x: search_query_policy in str(x['title']) or search_query_policy in str(x['content']), axis=1)
+                df_policy = df_policy[mask]
+            
+            if not df_policy.empty:
+                # 카테고리별 그룹핑
+                categories = df_policy['category'].unique()
+                
+                for cat in categories:
+                    st.markdown(f"### 🛡️ {cat}")
+                    cat_items = df_policy[df_policy['category'] == cat]
+                    
+                    for _, row in cat_items.iterrows():
+                        with st.expander(f"**{row['title']}**"):
+                            # 규정은 좀 더 강조된 UI
+                            st.info(row['content'], icon="ℹ️")
+            else:
+                st.info("검색 결과가 없습니다.")
+        else:
+            st.warning("규정 데이터를 불러올 수 없습니다.")
+
+
+
+==================================================
+FILE_PATH: ui\inquiry_page.py
+==================================================
+
+import streamlit as st
+import requests
+import json
+import pandas as pd
+import altair as alt
+import os
+
+# 스타일 파일 임포트 (Root 실행 기준)
+try:
+    from ui.styles import apply_custom_styles, show_metric_card
+except ImportError:
+    # 혹시 모를 경로 에러 대비 (같은 폴더)
+    from styles import apply_custom_styles, show_metric_card
+
+# API URL 설정
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8080")
+
+# ==============================================================================
+# [UI Component 1] LangGraph 아키텍처 다이어그램 (Expander)
+# ==============================================================================
+def show_langgraph_architecture():
+    with st.expander("AI Agent 아키텍처 (Processing Flow)", expanded=False):
+        st.markdown("""
+        <div style="text-align: center; color: #8B949E; margin-bottom: 10px;">
+            User Intent Analysis ➔ Route Optimization ➔ Specialized Retrieval ➔ Synthesis
+        </div>
+        """, unsafe_allow_html=True)
+
+# ... (중략) ...
+
+# ==============================================================================
+# [UI Component 2] 추천 프롬프트 & 로그
+# ==============================================================================
+def show_sample_prompts():
+    """추천 프롬프트 섹션"""
+    with st.expander("추천 질문 (Click to Copy)", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            st.caption("매출 분석")
+            st.code('서울강남점의 최근 매출 하락 원인을 메뉴별로 분석해줘', language=None)
+            st.code('최근 1주일간 가장 잘팔린 메뉴 Top 5와 그 이유를 리뷰 기반으로 알려줘', language=None)
+            st.code('부산점과 서울점의 매출과 리뷰를 비교해서 개선점을 제안해줘', language=None)
+        with c2:
+            st.caption("매뉴얼 & 규정")
+            st.code('고객이 환불을 요구할 때 규정과 응대 멘트 알려줘', language=None)
+            st.code('오픈 조와 마감 조가 해야 할 필수 체크리스트는?', language=None)
+            # st.code('매장 위생 점검 항목 리스트와 준비물 요약해줘', language=None)
+            # st.code('신규 아르바이트생 교육 시 강조해야 할 복장 규정은?', language=None)
+            st.code('서울 종로구의 짜장면 맛집 추천해줘 (웹 검색)', language=None)
+
+def show_recent_logs():
+    """최근 검색어 섹션"""
+    with st.expander("최근 검색 기록 (Recent Activity)", expanded=False):
+        if "messages" in st.session_state and len(st.session_state.messages) > 1:
+            recent = [m["content"] for m in reversed(st.session_state.messages) if m["role"]=="user"][:5]
+            for r in recent: st.text(f"🔍 {r}")
+        else:
+            st.info("No recent activity.")
+
+# ==============================================================================
+# [Logic] AI 메시지 렌더링 (Custom CSS 적용)
+# ==============================================================================
+def display_ai_message(message_content):
+    """
+    AI 응답을 파싱하여 카드형 UI, 차트 등으로 렌더링
+    """
+    json_data = None
+    
+    # 1. Parsing 시도
+    try:
+        if isinstance(message_content, dict):
+            json_data = message_content
+        elif isinstance(message_content, str):
+            # 혹시 마크다운 코드 블록(```json ... ```)으로 감싸져 있을 경우 제거
+            clean_content = message_content.strip()
+            if clean_content.startswith("```json"):
+                clean_content = clean_content[7:]
+            if clean_content.endswith("```"):
+                clean_content = clean_content[:-3]
+            
+            json_data = json.loads(clean_content)
+    except json.JSONDecodeError:
+        # JSON이 아닌 일반 텍스트 메시지 (단순 출력)
+        st.markdown(message_content)
+        return
+    except Exception as e:
+        st.error(f"Error parsing response: {e}")
+        st.code(message_content)
+        return
+
+    # 2. 렌더링 로직 (파싱 성공 시)
+    try:
+        if not json_data:
+            st.markdown(str(message_content))
+            return
+
+        # (1) Key Metrics (카드 UI)
+        if "key_metrics" in json_data and json_data["key_metrics"]:
+            metrics = json_data["key_metrics"]
+            # 리스트형 처리
+            if isinstance(metrics, dict):
+                 m_list = [{"label": k, "value": v} for k, v in metrics.items()]
+            else:
+                 m_list = metrics
+            
+            if m_list:
+                cols = st.columns(len(m_list[:3]))
+                for i, m in enumerate(m_list[:3]):
+                    show_metric_card(
+                        cols[i], 
+                        label=str(m.get("label") or m.get("title", "Metric")), 
+                        value=str(m.get("value")), 
+                        delta=str(m.get("delta")) if m.get("delta") else None
+                    )
+                st.markdown("---")
+
+        # (2) Chart Rendering
+        if "chart_data" in json_data and json_data["chart_data"]:
+            title = json_data.get("chart_setup", {}).get("title", "데이터 시각화")
+            st.markdown(f"#### 📊 {title}")
+            
+            c_data = json_data["chart_data"]
+            if isinstance(c_data, list) and len(c_data) > 0:
+                df = pd.DataFrame(c_data)
+                
+                # Chart Setup 정보 활용
+                c_setup = json_data.get("chart_setup", {})
+                x_col = c_setup.get("x", "date") # 기본값 date
+                y_col = c_setup.get("y", "sales") # 기본값 sales
+                
+                # 컬럼이 실제 데이터에 있는지 확인 (없으면 첫번째, 두번째 컬럼 사용)
+                if x_col not in df.columns: x_col = df.columns[0]
+                if y_col not in df.columns and len(df.columns) > 1: y_col = df.columns[1]
+
+                # Altair Chart (Dynamic Coloring)
+                base = alt.Chart(df).mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5).encode(
+                    x=alt.X(f'{x_col}:O', title=x_col.upper(), axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y(f'{y_col}:Q', title=y_col.upper()),
+                    tooltip=list(df.columns)
+                )
+
+                if "store" in df.columns:
+                    # 지점별 비교 시 색상 구분 (Legend 자동 생성)
+                    chart = base.encode(color=alt.Color("store:N", title="지점"))
+                else:
+                    # 단일 지점 시 단색
+                    chart = base.encode(color=alt.value("#4facfe"))
+                
+                chart = chart.properties(height=300)
+                st.altair_chart(chart, use_container_width=True)
+
+        # (3) Text Content
+        if "answer" in json_data:
+            st.markdown(json_data['answer'])
+        elif "summary" in json_data:
+            st.info(f"💡 **Insight**: {json_data['summary']}")
+            
+        # (4) References
+        if "used_docs" in json_data and json_data["used_docs"]:
+             with st.expander("📚 Referenced Sources (참고 자료)"):
+                 for d in json_data["used_docs"]:
+                     if "http" in d:
+                         # URL Link Parsing
+                         parts = d.split("http")
+                         text_title = parts[0].strip(" -[]")
+                         url = "http" + parts[1].split()[0].rstrip(")")
+                         
+                         title = text_title if text_title else "External Link"
+                         st.markdown(f"- 🔗 [{title}]({url})")
+                     else:
+                         st.markdown(f"- {d}")
+
+        if "used_reviews" in json_data:
+             revs = json_data["used_reviews"]
+             if revs:
+                 with st.expander(f"💬 고객 리뷰 근거 ({len(revs)}건)"):
+                      for r in revs[:5]:
+                          st.caption(f"{r.get('ordered_at', '')[:10]} | {r.get('menu_name', '')}")
+                          st.markdown(f"**{'⭐'*int(r.get('rating',0))}**: {r.get('review_text')}")
+                          st.divider()
+
+    except Exception as e:
+        st.error(f"Render Error: {e}")
+        st.write(json_data)
+            
+# ... (중략) ...
+
+# ==============================================================================
+# [Page] 메인 페이지 엔트리포인트
+# ==============================================================================
+def inquiry_page():
+    # 1. Custom CSS 적용
+    apply_custom_styles()
+    
+    # 2. Header Area
+    st.markdown("<h1>AI Franchise Manager</h1>", unsafe_allow_html=True)
+    st.caption("LLM & LangGraph 기반 지능형 매장 운영 지원 시스템")
+    
+    # 3. Top Components
+    show_langgraph_architecture()
+    show_sample_prompts()
+    show_recent_logs()
+    
+    st.divider()
+
+    # 4. Session Init
+    if "messages" not in st.session_state:
+        st.session_state.messages = [{
+            "role": "assistant", 
+            "content": "안녕하세요! 점주님, 무엇을 도와드릴까요?\n\n데이터 분석, 매장 규정, 고객 응대 등 궁금한 점을 편하게 물어보세요."
+        }]
+
+    # 5. Chat History Render
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            if "logs" in msg:
+                # 상태 메시지를 작고 깔끔하게
+                with st.status("✅ Analysis Process", expanded=False, state="complete") as s:
+                    for l in msg["logs"]: 
+                         st.write(f"🔹 {l['message']}")
+            if msg["content"]:
+                display_ai_message(msg["content"])
+
+    # 6. User Input
+    if prompt := st.chat_input("질문을 입력하세요..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        st.chat_message("user").markdown(prompt)
+        
+        # --- [Phase 1: Check] ---
+        with st.chat_message("assistant"):
+            with st.status("🕵️ Analyzing your inquiry...", expanded=True) as status:
+                try:
+                    res = requests.post(f"{API_BASE_URL}/inquiry/check", json={"store_id": 1, "question": prompt})
+                    if res.status_code == 200:
+                        data = res.json()["data"]
+                        status.update(label="Analysis Complete. Please select an action.", state="complete", expanded=False)
+                        st.session_state.pending_inquiry = {"question": prompt, "data": data}
+                        st.rerun()
+                    else:
+                        status.update(label="Server Error", state="error")
+                except Exception as e:
+                    status.update(label=f"Connection Error: {e}", state="error")
+
+    # 7. [Phase 2: Action Selection]
+    if "pending_inquiry" in st.session_state:
+        pending = st.session_state.pending_inquiry
+        # data 변수 제거하고 직접 접근
+        category = pending["data"].get("category", "general")
+        question = pending["question"]
+        
+        with st.chat_message("assistant"):
+            # 깔끔한 Action Card
+            st.markdown(f"""
+            <div style="background-color: #1F242C; border: 1px solid #4facfe; border-radius: 8px; padding: 15px; margin-bottom: 10px;">
+                <h3 style="margin:0; color: #4facfe;">🚀 {category.upper()} Analysis</h3>
+                <p style="color: #8B949E; margin-top: 5px;">질문의 의도를 파악하고 관련 데이터를 조회했습니다.</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if category == "sales":
+                # [분석 정보 미리보기] 직접 접근 방식 사용
+                if pending["data"].get("sales_data"):
+                    st.info(f"""
+                    **📋 분석 계획 (Execution Plan)**
+                    - **Target Store**: {pending["data"]["sales_data"].get("target_store_name") or "전체 지점"}
+                    - **Data Sources**: Sales(매출), Reviews(리뷰), Menus(메뉴)
+                    - **Analysis Type**: Trend & Performance
+                    """)
+                else:
+                    st.write("매출 데이터를 심층 분석하여 리포트를 생성합니다.")
+                c1, c2 = st.columns([1, 1])
+                if c1.button("분석 시작", type="primary", use_container_width=True):
+                    st.session_state.processing_mode = "db"
+                    # [Optimization] 이미 가져온 Sales Data를 재사용하기 위해 Context에 전달
+                    sales_payload = [pending["data"].get("sales_data", {})]
+                    st.session_state.processing_meta = {"question": question, "category": category, "context": sales_payload}
+                    del st.session_state.pending_inquiry
+                    st.rerun()
+                if c2.button("취소", use_container_width=True):
+                    del st.session_state.pending_inquiry
+                    st.rerun()
+            else: # Manual / Policy
+                candidates = pending["data"].get("candidates", [])
+                st.write(f"🔍 **{len(candidates)}**건의 관련 문서를 찾았습니다.")
+                
+                # [AI Recommendation]
+                recommendation = pending["data"].get("recommendation", {})
+                if recommendation and recommendation.get("comment"):
+                    rec_msg = recommendation["comment"]
+                    if "웹 검색" in rec_msg or "낮습니다" in rec_msg:
+                        st.warning(f"{rec_msg}")
+                    else:
+                        st.success(f"{rec_msg}")
+                
+                selected_docs = []
+                if candidates:
+                    st.markdown("---")
+                    st.caption("참고할 문서를 선택하세요 (체크박스):")
+                    
+                    for c in candidates:
+                        # 파싱: [제목] (유사도: 0.xx) 형태라고 가정
+                        first_line = c.split('\n')[0]
+                        # 제목과 상세 내용 분리
+                        title = first_line
+                        score_text = ""
+                        
+                        if "(유사도:" in first_line:
+                            parts = first_line.split("(유사도:")
+                            title = parts[0].strip()
+                            score_text = f"(유사도: {parts[1].replace(')', '').strip()})"
+                        
+                        # 카드 스타일 배경
+                        col_chk, col_txt = st.columns([0.1, 0.9])
+                        with col_chk:
+                             # Default True
+                             is_checked = st.checkbox("Select", value=True, key=c[:20], label_visibility="collapsed")
+                        
+                        with col_txt:
+                             # Custom Style
+                             st.markdown(f"""
+                             <div style="
+                                 background-color: #161B22; 
+                                 padding: 10px; 
+                                 border-radius: 8px; 
+                                 border: 1px solid #30363D; 
+                                 display: flex; 
+                                 justify-content: space-between; 
+                                 align-items: center;
+                                 margin-bottom: 5px;">
+                                 <span style="font-weight: bold; color: #E6EDF3;">📄 {title}</span>
+                                 <span style="font-size: 0.8em; color: #4facfe; background-color: rgba(79, 172, 254, 0.1); padding: 2px 8px; border-radius: 12px;">
+                                     {score_text}
+                                 </span>
+                             </div>
+                             """, unsafe_allow_html=True)
+                             # 상세 내용 (옵션: 너무 길면 생략하거나 expander로)
+                             # with st.expander("내용 미리보기"):
+                             #    st.text(c)
+                        
+                        if is_checked:
+                             selected_docs.append(c)
+                    
+                    st.markdown("---")
+                
+                c1, c2 = st.columns([1, 1])
+                if c1.button("답변 생성", type="primary", use_container_width=True):
+                    st.session_state.processing_mode = "db"
+                    st.session_state.processing_meta = {"question": question, "category": category, "context": selected_docs}
+                    del st.session_state.pending_inquiry
+                    st.rerun()
+                if c2.button("웹 검색 (Google)", use_container_width=True):
+                    st.session_state.processing_mode = "web"
+                    st.session_state.processing_meta = {"question": question, "category": category, "context": []}
+                    del st.session_state.pending_inquiry
+                    st.rerun()
+
+    # 8. [Phase 3: Generation]
+    if "processing_mode" in st.session_state:
+        meta = st.session_state.processing_meta
+        
+        with st.chat_message("assistant"):
+            st_status = st.status("Generating Response...", expanded=True)
+            full_resp = ""
+            logs = []
+            
+            try:
+                # 스트리밍 요청
+                res = requests.post(f"{API_BASE_URL}/inquiry/generate/stream", json={
+                    "store_id": 1,
+                    "question": meta["question"],
+                    "category": meta["category"],
+                    "mode": st.session_state.processing_mode,
+                    "context_data": meta["context"]
+                }, stream=True)
+                
+                final_obj = None
+                for line in res.iter_lines():
+                    if line:
+                        try:
+                            d = json.loads(line.decode('utf-8'))
+                            if "step" in d and d["step"] != "done":
+                                msg = d.get("message", "")
+                                st_status.write(f"🔹 {msg}")
+                                logs.append(d)
+                            if "final_answer" in d:
+                                final_obj = d["final_answer"]
+                        except: continue
+                
+                st_status.update(label="Complete!", state="complete", expanded=False)
+                
+                if final_obj:
+                    # JSON 직렬화
+                    full_resp = json.dumps(final_obj) if isinstance(final_obj, (dict, list)) else final_obj
+                    display_ai_message(full_resp)
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": full_resp, 
+                        "logs": logs
+                    })
+                else:
+                    st.error("Failed to generate answer.")
+            except Exception as e:
+                st.error(f"Error: {e}")
+        
+        del st.session_state.processing_mode
+        del st.session_state.processing_meta
+        st.rerun()
+
+    # Sidebar
+    with st.sidebar:
+        st.caption("Developed with LangGraph")
+        if st.button("Reset Conversation", use_container_width=True):
+            st.session_state.messages = []
+            st.rerun()
+
+
+
+==================================================
+FILE_PATH: ui\login.py
+==================================================
+
+# app/ui/login.py
+import streamlit as st
+from api_utils import post_api
+
+
+def login_page():
+    st.title("🔐 Login")
+
+    email = st.text_input("Email")
+    password = st.text_input("Password", type="password")
+
+    if st.button("Login"):
+        res_data = post_api("/user/login", json_data={"email": email})
+
+        if res_data:
+            st.session_state.user_email = email
+            st.session_state.page = "dashboard"
+            st.rerun()
+
+    st.button("회원가입", on_click=lambda: go_register())
+
+
+def go_register():
+    st.session_state.page = "register"
+
+
+
+==================================================
+FILE_PATH: ui\main_ui.py
+==================================================
+
+from debug_utils import render_session_state_viewer
+from menu_page import menu_page
+from review_page import review_page
+from dashboard import dashboard_page
+from register import register_page
+from login import login_page
+from inquiry_page import inquiry_page
+from guide_page import guide_page
+import streamlit as st
+import sys
+import os
+
+# ui 디렉토리를 path에 추가 (필요시)
+st.session_state.user_email = "email"
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+st.set_page_config(page_title="AI Project", layout="wide")
+
+# 스타일 적용 (전역)
+try:
+    from styles import apply_custom_styles
+    apply_custom_styles()
+except ImportError:
+    pass
+
+# 세션 상태 초기화
+if "page" not in st.session_state:
+    st.session_state.page = "inquiry_page" # AI 매니저를 메인으로 설정
+
+# 로그인 상태 확인 및 리다이렉트 (로그인 안 된 경우)
+if "user_email" not in st.session_state:
+    if st.session_state.page not in ["login", "register"]:
+        st.session_state.page = "login"
+
+# --- 사이드바 내비게이션 (로그인한 경우만 표시) ---
+if "user_email" in st.session_state:
+    with st.sidebar:
+        st.title("관리 메뉴")
+        st.markdown("환영합니다, **점주님**!")
+        
+        st.divider()
+
+        # 페이지 이름과 내부 키 매핑
+        nav_options = {
+            "AI 매니저 (Main)": "inquiry_page", 
+            "총매출/AI 분석": "dashboard",
+            "메뉴 조회": "menu_page",
+            "리뷰 관리": "review_page",
+            "매뉴얼 & 규정": "guide_page",
+            "👨‍💻 개발자 노트 (Portfolio)": "portfolio_page"
+        }
+
+        # 현재 페이지의 index 찾기
+        current_idx = 0
+        current_page = st.session_state.page
+        
+        # 값이 없는 경우(예: 외부 요인으로 페이지가 바뀐 경우) 방어
+        if current_page not in nav_options.values():
+            current_page = "inquiry_page"
+            
+        for i, val in enumerate(nav_options.values()):
+            if val == current_page:
+                current_idx = i
+                break
+
+        selection = st.radio(
+            "이동하기",
+            list(nav_options.keys()),
+            index=current_idx,
+            label_visibility="collapsed"
+        )
+        
+        st.session_state.page = nav_options[selection]
+
+        # st.divider()
+        # if st.button("로그아웃"):
+        #     st.session_state.clear()
+        #     st.session_state.page = "login"
+        #     st.rerun()
+
+        # --- 디버그 세션 조회 컴포넌트 추가 ---
+        render_session_state_viewer()
+
+# --- 페이지 라우팅 ---
+if st.session_state.page == "login":
+    login_page()
+
+elif st.session_state.page == "register":
+    register_page()
+
+elif st.session_state.page == "dashboard":
+    dashboard_page()
+
+elif st.session_state.page == "inquiry_page":
+    inquiry_page()
+
+elif st.session_state.page == "menu_page":
+    menu_page()
+
+elif st.session_state.page == "review_page":
+    review_page()
+
+elif st.session_state.page == "guide_page":
+    guide_page()
+
+elif st.session_state.page == "portfolio_page":
+    from portfolio_page import render_portfolio_page
+    render_portfolio_page()
+
+
+
+==================================================
+FILE_PATH: ui\menu_page.py
+==================================================
+
+import streamlit as st
+import pandas as pd
+from api_utils import get_api
+
+def menu_page():
+    # 스타일 임포트
+    try: from styles import show_metric_card
+    except ImportError: from ui.styles import show_metric_card
+
+    st.markdown("<h1>🍴 Menu Management</h1>", unsafe_allow_html=True)
+    st.caption("Centralized Menu Database & Pricing Overview")
+
+    menu_data = get_api("/menu/get")
+
+    if menu_data:
+        # DataFrame으로 변환
+        df = pd.DataFrame(menu_data)
+        
+        # [UX] 불필요한 embedding 데이터 숨기기
+        if 'embedding' in df.columns:
+            df = df.drop(columns=['embedding'])
+
+        # 컬럼 한글화
+        column_mapping = {
+            "menu_id": "ID",
+            "menu_name": "메뉴명",
+            "category": "카테고리",
+            "cost_price": "원가",
+            "list_price": "정가",
+            "main_ingredient": "주재료",
+            "is_seasonal": "시즌여부",
+            "description": "설명"
+        }
+
+        # 존재하는 컬럼만 매핑
+        df_display = df.rename(
+            columns={k: v for k, v in column_mapping.items() if k in df.columns})
+
+        # 필터링 UI
+        cols = st.columns(2)
+        with cols[0]:
+            category_filter = st.multiselect(
+                "카테고리 선택", options=df_display["카테고리"].unique())
+
+        if category_filter:
+            df_display = df_display[df_display["카테고리"].isin(category_filter)]
+
+        # 데이터 테이블 표시
+        st.dataframe(df_display, width='stretch')
+
+        # 상세 요약 통계
+        st.divider()
+        st.subheader("📊 메뉴 통계")
+        col1, col2, col3 = st.columns(3)
+        show_metric_card(col1, "전체 메뉴 수", str(len(df)))
+
+        avg_price = df['list_price'].mean() if 'list_price' in df and not df['list_price'].isnull().all() else 0
+        show_metric_card(col2, "평균 가격", f"{avg_price:,.0f}원")
+
+        seasonal_count = len(df[df['is_seasonal'] == True]) if 'is_seasonal' in df else 0
+        show_metric_card(col3, "시즌 메뉴 수", str(seasonal_count))
+    else:
+        st.info("메뉴 데이터를 불러올 수 없습니다.")
+
+
+
+==================================================
+FILE_PATH: ui\portfolio_page.py
+==================================================
+
+import streamlit as st
+import os
+
+def render_portfolio_page():
+    # --- 제목 섹션 ---
+    st.title("👨‍💻 Developer's Technical Whitepaper")
+    st.caption("AI Franchise Manager Project Portfolio (2024.12 ~ 2025.01)")
+    
+    st.divider()
+
+    # --- 레이아웃 구성: 왼쪽(목차) / 오른쪽(내용) ---
+    col_nav, col_content = st.columns([1, 3])
+
+    with col_nav:
+        st.subheader("📚 Table of Contents")
+        
+        # 목차 리스트 정의
+        chapters = {
+            "1. Project Overview": "intro",
+            "2. Planning Intent": "intent",
+            "3. Tech Stack Strategy": "stack",
+            "4. Database Schema": "schema",
+            "5. System Architecture": "architecture",
+            "6. API Specification": "api",
+            "7. Feat: Report Agent": "feat_report",
+            "8. Feat: Inquiry Agent": "feat_inquiry",
+            "9. Log #1: Connectivity": "log_aws",
+            "10. Log #2: JSON Parsing": "log_json",
+            "11. Log #3: RAG Accuracy": "log_rag",
+            "12. Future Roadmap": "roadmap",
+            "📜 Full Document (Raw)": "raw_doc"
+        }
+        
+        # 라디오 버튼으로 챕터 선택
+        selected_chapter = st.radio(
+            "Go to Section:",
+            list(chapters.keys()),
+            label_visibility="collapsed"
+        )
+        
+        selection_key = chapters[selected_chapter]
+
+    # --- 콘텐츠 렌더링 함수 ---
+    with col_content:
+        # 1. Project Overview
+        if selection_key == "intro":
+            st.header("1. 📘 Project Overview")
+            st.info("**AI Franchise Manager**는 가맹점주의 '데이터 분석'과 '매뉴얼 숙지' 어려움을 해결하는 All-in-One AI 솔루션입니다.")
+            
+            st.markdown("""
+            - **Role**: Full Stack Developer & AI Engineer (1인 개발)
+            - **Goal**: 단순 대시보드가 아닌, **먼저 제안하는(Proactive) AI Agent** 구현
+            - **Key Value**:
+                1. **Automation**: 클릭 없는 리포트 자동 생성
+                2. **Accessibility**: 채팅으로 해결하는 운영 Q&A
+                3. **Reliability**: Hallucination 없는 신뢰성
+            """)
+
+        # 2. Planning Intent
+        elif selection_key == "intent":
+            st.header("2. 🎯 Planning Intent")
+            st.warning("문제점: 사장님들은 POS 숫자를 볼 뿐, '원인'을 분석할 시간이 없습니다.")
+            st.success("해결책: 요리에만 집중하세요. 분석은 AI가 대신해서 '이유'와 '전략'을 떠먹여 드립니다.")
+            
+            st.write("### Why this Project?")
+            st.markdown("""
+            * **Unmanned Store Trend**: 무인 매장 증가로 인한 원격 관리 니즈 폭발
+            * **Complexity**: 배달 앱, POS, 발주 시스템... 너무 많은 툴 파편화
+            * **SaaS Opportunity**: 월 구독형 AI 매니저 서비스의 가능성 확인
+            """)
+
+        # 3. Tech Stack
+        elif selection_key == "stack":
+            st.header("3. 🛠️ Tech Stack Strategy")
+            
+            tab1, tab2, tab3 = st.tabs(["Core (AI)", "Backend", "Infra"])
+            
+            with tab1:
+                st.subheader("Brain: LangGraph")
+                st.write("- **Selection Reason**: 단순 Chain(Linear)을 넘어 **순환(Loop)과 상태(State)** 관리가 필수적인 에이전트 설계를 위해 도입.")
+                st.write("- **Models**: OpenAI GPT-4o (추론용) + Gemini 1.5 Flash (대량 처리용)")
+            
+            with tab2:
+                st.subheader("Server: FastAPI")
+                st.write("- **Async**: 비동기 처리에 최적화된 Python 프레임워크")
+                st.write("- **Docs**: Swagger UI 자동 생성으로 API 문서화 비용 절감")
+                
+                st.subheader("DB: PostgreSQL + pgvector")
+                st.write("- **Unified**: 관계형 데이터(매출)와 벡터(매뉴얼)를 단일 DB에서 처리하여 관리 포인트 일원화")
+            
+            with tab3:
+                st.subheader("Deploy: AWS EC2")
+                st.write("- **Environement**: Ubuntu 22.04 LTS")
+                st.write("- **Networking**: SSH Tunneling, TCP/IP Security Group 설정 경험")
+
+        # 4. Schema
+        elif selection_key == "schema":
+            st.header("4. 💾 Database Schema (ERD)")
+            st.markdown("정규화된 관계형 데이터와 벡터 서치용 테이블의 하이브리드 구조입니다.")
+            
+            # Mermaid ERD (간소화)
+            st.graphviz_chart("""
+            digraph ERD {
+                node [shape=record];
+                Stores [label="{Stores|+ store_id (PK)\l+ name\l+ location}"];
+                Sales [label="{Sales_Daily|+ sale_id (PK)\l+ date\l+ revenue\l+ weather_tags}"];
+                Menus [label="{Menus|+ menu_id (PK)\l+ name\l+ category\l+ price}"];
+                Manuals [label="{Manuals (Vector)|+ id\l+ content (Text)\l+ embedding (1536d)}"];
+                Reports [label="{Store_Reports|+ report_id\l+ content (JSON)\l+ risk_score}"];
+
+                Stores -> Sales [label="1:N"];
+                Stores -> Reports [label="1:N"];
+                Menus -> Sales [label="N:N (OrderItems)"];
+            }
+            """)
+
+        # 5. Architecture
+        elif selection_key == "architecture":
+            st.header("5. 🏗️ System Architecture")
+            st.markdown("Query의 성격에 따라 두 개의 전문 에이전트로 분기되는 **Router Pattern**을 적용했습니다.")
+            
+            st.image("https://mermaid.ink/img/pako:eNplkktvwjAMx7_KyXlA4tBLB9TuMCG022rTS6w0akpSnAZCffcl5UW7TfH3s_3_bMc5lUYFSpD1q-y0eWDoPFlzch_tW-fM2W2028Z-7IeP8TD0g3C0-zh0_eFjHIbB7iYID8PtdhgGo937OLj70w_3H_vhcPe-96N_20nBChU0hApqqG1eSclz4R_Qk8K51KxQeW6U4rmwUjHheE7JCo2hS-iS1pW1c3-I0hV6Q91QZ-h_oTv0gV7zXCljVqg810rx96nQeO7S-hO05F7W3lD_QvclT9S9Urxk7-Vz6xJ6T89L3hX6E_QoVFaQo1hAhmIOGYp5ZCiWkKFYRoZipQxQk2GAmgyj1GQYoSbDgJoMA9RkGKSmlL5YQYZaGaoVZKjVkKG2ghy1Msql-g9Qk1Eu9X-gJqNcGv5ATUa5NPyBmoxyKfgDNRnlcl0y1N5QuyFD7Q21GzLU3lC7IUOtjHI5_gPUZJRLe4D6X4xyaQ9Qk1Eu7QFqMspv6y-oxSi_rb-AFvN0y2_rL6jFKL-tv4B-i_8BFm0zCQ?type=png")
+            st.caption("▲ System Logic Flow (Report / Inquiry Route)")
+
+        # 6. API
+        elif selection_key == "api":
+            st.header("6. 🔌 API Specification")
+            st.write("RESTful 원칙을 준수하며 FastAPI 엔드포인트를 설계했습니다.")
+            
+            st.code("""
+# 1. AI 채팅 (Streaming)
+POST /api/v1/inquiry
+Body: { "query": "배달 수수료 정책 알려줘", "store_id": 1 }
+
+# 2. 리포트 생성 (Batch Trigger)
+POST /api/v1/report/generate
+Body: { "target_date": "2025-01-04" }
+
+# 3. 리포트 조회
+GET /api/v1/report/{store_id}
+            """, language="http")
+
+        # 7. Report Agent
+        elif selection_key == "feat_report":
+            st.header("7. 🤖 Core Feature: Report Agent")
+            st.subheader("Data Pipeline + LLM Reasoning")
+            
+            st.write("이 에이전트는 단순히 '분석해줘'라고 프롬프트만 치는 게 아닙니다.")
+            st.write("엔지니어링으로 데이터를 완벽하게 통제합니다.")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("#### 1. Pre-calculation (Python)")
+                st.write("총 매출, 성장률 같은 핵심 숫자는 파이썬으로 직접 계산합니다. (LLM 연산 오류 방지)")
+            
+            with col2:
+                st.markdown("#### 2. Tag Parsing Strategy")
+                st.write("JSON 파싱 에러를 막기 위해 `<SECTION>` 태그 방식을 도입하여 성공률을 99.9%로 높였습니다.")
+
+        # 8. Inquiry Agent
+        elif selection_key == "feat_inquiry":
+            st.header("8. 💬 Core Feature: Inquiry Agent")
+            st.subheader("Adaptive RAG System")
+            
+            st.markdown("질문의 의도(Intent)를 분류해 도구를 스스로 선택합니다.")
+            
+            st.write("""
+            - **사내 규정 질문**: "오픈 시간 언제야?" -> **Vector DB 검색 (RAG)**
+            - **외부 트렌드 질문**: "요즘 뜨는 디저트 뭐야?" -> **Tavily Web Search**
+            - **복합 질문**: "비 오는 날 배달 팁 규정 알려줘" -> **Hybrid Search**
+            """)
+
+        # 9. Log #1 AWS
+        elif selection_key == "log_aws":
+            st.header("🔥 Log #1: Connectivity Issue")
+            st.error("Issue: AWS 서버 배포 후 DB(RDS) 연결 거부 (Connection Refused)")
+            
+            st.write("#### 🕵️ Analysis")
+            st.write("로컬 개발 시 사용하던 SSH 터널링 포트(`5433`) 설정이 `.env` 파일에 남아 서버에 그대로 배포됨. 서버는 `localhost:5433`에서 아무것도 찾을 수 없음.")
+            
+            st.success("#### ✅ Solution")
+            st.code("""
+# Local .env (Tunneling)
+DB_URL=postgresql://user:pass@localhost:5433/db
+
+# Server .env (Direct) -> Fix!
+DB_URL=postgresql://user:pass@database-aws.rds...:5432/db
+            """, language="bash")
+            st.write("서버 환경 변수를 직접 수정하고 `pkill` 프로세스 정리 후 재시동하여 해결.")
+
+        # 10. Log #2 JSON
+        elif selection_key == "log_json":
+            st.header("🔥 Log #2: LLM JSON Parsing Crash")
+            st.error("Issue: LLM이 JSON 형식을 자꾸 틀려서 파이프라인 중단")
+            
+            st.write("#### 🕵️ Analysis")
+            st.write("LLM은 확률적 모델이라 Trailing Comma(,) 같은 문법 오류를 완벽히 통제하기 어려움.")
+            
+            st.success("#### ✅ Solution: Tag Parser 도입")
+            st.code("""
+# Before (JSON)
+{ "summary": "좋아요", ... } -> 에러 빈발
+
+# After (XML Tags)
+<SUMMARY>좋아요</SUMMARY> -> Regex로 추출 (성공률 99.9%)
+            """, language="python")
+
+        # 11. Log #3 RAG
+        elif selection_key == "log_rag":
+            st.header("🔥 Log #3: RAG Accuracy")
+            st.error("Issue: '직원 복장' 검색 시 '유니폼' 문서를 못 찾음")
+            
+            st.success("#### ✅ Solution: Hybrid Search")
+            st.write("단순 키워드 매칭 한계를 극복하기 위해 **pgvector(Cosine Similarity)** 기반 의미 검색을 도입.")
+            st.write("이제 '옷', '복장'이라고 물어도 '유니폼 규정' 문서를 정확히 찾아냄.")
+
+        # 12. Roadmap
+        elif selection_key == "roadmap":
+            st.header("12. 🚀 Future Roadmap")
+            
+            st.write("### Self-Correction Loop (자율 수정)")
+            st.markdown("""
+            현재의 Linear Pipeline을 넘어, 에러 발생 시 **"스스로 고쳐와"**라고 되묻는 순환 그래프(Cycle)를 도입할 예정입니다.
+            """)
+            st.graphviz_chart("""
+            digraph Loop {
+                rankdir=LR;
+                Parse [label="JSON Parsing"];
+                Error [label="Error?", shape=diamond];
+                Refine [label="Refine Prompt"];
+                Success [label="Save DB"];
+                
+                Parse -> Error;
+                Error -> Success [label="No"];
+                Error -> Refine [label="Yes (Retry)"];
+                Refine -> Parse;
+            }
+            """)
+
+        # Raw Doc
+        elif selection_key == "raw_doc":
+            st.subheader("📜 원본 문서 (Markdown View)")
+            try:
+                file_path = os.path.join(os.getcwd(), "docs", "portfolio", "PORTFOLIO_MASTER.md")
+                with open(file_path, "r", encoding="utf-8") as f:
+                    st.code(f.read(), language="markdown")
+            except:
+                st.error("파일을 찾을 수 없습니다.")
+
+
+
+==================================================
+FILE_PATH: ui\register.py
+==================================================
+
+# app/ui/register.py
+import streamlit as st
+from api_utils import post_api
+
+
+def register_page():
+    st.title("📝 Register")
+
+    email = st.text_input("Email")
+
+    if st.button("Register"):
+        res_data = post_api("/user/register", json_data={"email": email})
+
+        if res_data:
+            st.success("회원가입 성공! 로그인해주세요.")
+            st.session_state.page = "login"
+            st.rerun()
+
+    st.button("로그인으로 이동", on_click=lambda: go_login())
+
+
+def go_login():
+    st.session_state.page = "login"
+
+
+
+==================================================
+FILE_PATH: ui\review_page.py
+==================================================
+
+import streamlit as st
+import pandas as pd
+from api_utils import get_api
+
+def review_page():
+    # 스타일 임포트
+    try: from styles import show_metric_card
+    except ImportError: from ui.styles import show_metric_card
+
+    st.markdown("<h1>💬 Customer Reviews</h1>", unsafe_allow_html=True)
+    st.caption("Review Analysis & Sentiment Monitoring")
+    st.divider()
+
+    # 1. 지점 데이터 로드
+    stores_data = get_api("/store/get")
+    if not stores_data:
+        st.warning("매장 데이터를 불러올 수 없습니다.")
+        return
+
+    stores = pd.DataFrame(stores_data)
+
+    # 2. 매장 선택
+    selected_store_name = st.selectbox(
+        "리뷰를 확인할 매장을 선택하세요",
+        stores["store_name"]
+    )
+    store_row = stores[stores["store_name"] == selected_store_name].iloc[0]
+    store_id = int(store_row['store_id'])
+
+    st.info(f"📍 **{selected_store_name}**의 리뷰 목록입니다.")
+
+    # 3. 리뷰 데이터 로드
+    reviews_data = get_api(f"/review/store/{store_id}")
+
+    if not reviews_data:
+        st.info("해당 지점에 등록된 리뷰가 없습니다.")
+        return
+
+    df_reviews = pd.DataFrame(reviews_data)
+    df_reviews['created_at'] = pd.to_datetime(df_reviews['created_at'])
+    if 'ordered_at' in df_reviews.columns:
+        df_reviews['ordered_at'] = pd.to_datetime(df_reviews['ordered_at'])
+
+    # 통계 요약
+    col1, col2, col3 = st.columns(3)
+    avg_rating = df_reviews['rating'].mean()
+    show_metric_card(col1, "평균 평점", f"{avg_rating:.1f} / 5.0")
+    show_metric_card(col2, "총 리뷰 수", f"{len(df_reviews)}건")
+
+    high_rating_ratio = (len(df_reviews[df_reviews['rating'] >= 4]) / len(df_reviews)) * 100
+    show_metric_card(col3, "긍정 리뷰 비율", f"{high_rating_ratio:.1f}%")
+
+    st.divider()
+
+    # 4. 리뷰 목록 표시 (카드 형태나 리스트)
+    for _, row in df_reviews.iterrows():
+        with st.container():
+            # 평점에 따른 별 모양 표시
+            stars = "⭐" * int(row['rating'])
+
+            # 배달 앱 아이콘/텍스트
+            delivery = f"[{row['delivery_app']}]" if row['delivery_app'] else "[방문]"
+
+            st.markdown(f"### {stars} {row['rating']}.0")
+            st.write(
+                f"**메뉴:** {row['menu_name']} | **작성일:** {row['created_at'].strftime('%Y-%m-%d %H:%M')}")
+
+            # 실제 주문 데이터와의 연결성 표시
+            if pd.notnull(row['ordered_at']):
+                st.caption(
+                    f"🔗 실제 주문일: {row['ordered_at'].strftime('%Y-%m-%d %H:%M')}")
+
+            st.info(row['review_text'])
+            st.divider()
+
+
+
+==================================================
+FILE_PATH: ui\sales_component.py
+==================================================
+
+import streamlit as st
+import pandas as pd
+import altair as alt
+from datetime import date
+from api_utils import get_api
+# 스타일 임포트
+try:
+    from styles import show_metric_card
+except ImportError:
+    from ui.styles import show_metric_card
+
+
+@st.dialog("📊 지점 매출 상세 현황", width="large")
+def show_sales_dialog(store_id, store_name):
+    """
+    모달(다이얼로그) 창으로 매출 현황을 보여주는 컴포넌트
+    """
+    st.write(f"### {store_name}")
+    st.divider()
+
+    # 상단 탭 구성
+    tab1, tab2 = st.tabs(["📊 매출 현황", "🤖 AI 전략 리포트"])
+
+    with tab1:
+        # [Optimize] 매출 데이터 Session State 캐싱 (반복 호출 방지)
+        cache_key_sales = f"cached_sales_{store_id}"
+        if cache_key_sales not in st.session_state:
+             st.session_state[cache_key_sales] = get_api(f"/order/store/{store_id}/daily_sales")
+        
+        sales_data = st.session_state[cache_key_sales]
+
+        if sales_data:
+            df_sales = pd.DataFrame(sales_data)
+            df_sales['order_date'] = pd.to_datetime(
+                df_sales['order_date']).dt.date
+
+            if 'daily_revenue' in df_sales.columns:
+                df_sales['daily_revenue'] = pd.to_numeric(
+                    df_sales['daily_revenue'])
+
+            # 날짜 선택기를 먼저 정의하여 선택된 날짜 정보를 가져옴 (차트에서 강조하기 위함)
+            max_date = df_sales['order_date'].max()
+            min_date = df_sales['order_date'].min()
+
+            # 레이아웃 구성
+            col_top1, col_top2 = st.columns([2, 1])
+            with col_top2:
+                st.write("📅 **조회 날짜 선택**")
+                selected_date = st.date_input(
+                    "날짜 선택",
+                    value=max_date,
+                    min_value=min_date,
+                    max_value=max_date,
+                    key=f"modal_date_{store_id}",
+                    label_visibility="collapsed"
+                )
+            
+            # --- [NEW] 월간 매출 합계 (진실 규명 섹션) ---
+            # 선택된 '월(Month)'의 전체 매출을 계산해서 보여줌
+            if selected_date:
+                sel_year = selected_date.year
+                sel_month = selected_date.month
+                
+                # 해당 월 데이터 필터링
+                mask_month = (df_sales['order_date'].astype(str).str.startswith(f"{sel_year}-{sel_month:02d}"))
+                df_month = df_sales[mask_month]
+                
+                month_total_rev = df_month['daily_revenue'].sum() if not df_month.empty else 0
+                month_total_orders = df_month['total_orders'].sum() if 'total_orders' in df_month.columns else 0
+                
+                with col_top1:
+                    st.info(f"💰 **{sel_year}년 {sel_month}월 총 매출**: {int(month_total_rev):,}원 (주문 {int(month_total_orders):,}건)")
+            # ---------------------------------------------
+
+            # 1. 매출 그래프 (Altair를 사용하여 커스텀)
+            st.write("📈 **일별 매출 추이**")
+
+            # 강조 색상 설정을 위한 컬럼 추가
+            chart_df = df_sales.copy()
+            chart_df['is_selected'] = chart_df['order_date'] == selected_date
+            chart_df['order_date_str'] = chart_df['order_date'].astype(str)
+
+            # Altair 차트 생성
+            bar_chart = alt.Chart(chart_df).mark_bar().encode(
+                x=alt.X('order_date_str:N', title='날짜',
+                        axis=alt.Axis(labelAngle=0)),
+                y=alt.Y('daily_revenue:Q', title='매출액(원)'),
+                color=alt.condition(
+                    alt.datum.is_selected,
+                    alt.value('#FF4B4B'),  # 선택된 날짜 (빨간색 강조)
+                    alt.value('#1f77b4')   # 기본 색상 (파란색)
+                ),
+                tooltip=[
+                    alt.Tooltip('order_date_str:N', title='날짜'),
+                    alt.Tooltip('daily_revenue:Q', title='매출액', format=',.0f')
+                ]
+            ).properties(width='container', height=300)
+
+            st.altair_chart(bar_chart, width='stretch')
+
+            st.divider()
+
+            # 2. 날짜별 상세 내역 (주문 목록 캐싱)
+            cache_key_orders = f"cached_orders_{store_id}"
+            if cache_key_orders not in st.session_state:
+                st.session_state[cache_key_orders] = get_api(f"/order/store/{store_id}")
+            
+            orders_data = st.session_state[cache_key_orders]
+            if orders_data:
+                df_orders = pd.DataFrame(orders_data)
+                df_orders['ordered_at'] = pd.to_datetime(
+                    df_orders['ordered_at'])
+                mask = (df_orders['ordered_at'].dt.date == selected_date)
+                df_day = df_orders[mask]
+
+                if not df_day.empty:
+                    st.write(f"🛒 **{selected_date} 주문 목록**")
+                    display_df = df_day[['menu_name', 'quantity',
+                                        'total_price', 'ordered_at']].copy()
+                    display_df['ordered_at'] = display_df['ordered_at'].dt.strftime(
+                        '%H:%M')
+                    display_df.columns = ['메뉴명', '수량', '금액', '주문시간']
+
+                    m1, m2, m3 = st.columns(3)
+                    show_metric_card(m1, "선택 날짜", str(selected_date))
+                    show_metric_card(m2, "총 주문", f"{len(df_day)}건")
+                    show_metric_card(m3, "총 매출", f"{int(df_day['total_price'].sum()):,}원")
+
+                    st.dataframe(display_df, width='stretch',
+                                 hide_index=True)
+                else:
+                    st.info(f"{selected_date} 에는 주문 내역이 없습니다.")
+        else:
+            st.warning("데이터가 없거나 불러올 수 없습니다.")
+
+    with tab2:
+        st.write("### 🤖 AI 지점 경영 전략 리포트")
+        st.write("지점의 매출과 고객 리뷰를 분석하여 AI 컨설턴트가 최적의 운영 전략을 제안합니다.")
+
+        # 주차별 분석을 위한 날짜 옵션 생성
+        # sales_data는 tab1에서 이미 로드됨 (get_api)
+        report_target_date = None
+        
+        if 'df_sales' in locals() and not df_sales.empty:
+            max_d = df_sales['order_date'].max() # DB 상 최신 날짜 (예: 12월 30일)
+            min_d = df_sales['order_date'].min()
+            
+            # [Fix] 사용자 요청: 12월 4일부터 31일까지 1주 단위 강제 고정
+            # 1주차: 12.04 ~ 12.10
+            # 2주차: 12.11 ~ 12.17
+            # 3주차: 12.18 ~ 12.24
+            # 4주차: 12.25 ~ 12.31
+            
+            # [Dynamic] 데이터가 존재하는 기간을 기준으로 '월요일~일요일' 주차 자동 생성
+            week_options = {}
+            default_ix = 0
+            
+            # 타겟 날짜 (이전 탭에서 선택된 날짜)
+            target_obj = selected_date if 'selected_date' in locals() and selected_date else None
+            
+            # 동적 주차 리스트 생성
+            dynamic_weeks = []
+            
+            from datetime import timedelta
+            
+            curr_start = min_d
+            current_month = curr_start.month
+            week_num = 1
+            
+            # 데이터 끝 날짜까지 루프
+            while curr_start <= max_d:
+                # 월이 바뀌었는지 체크하여 주차 번호 리셋
+                if curr_start.month != current_month:
+                    current_month = curr_start.month
+                    week_num = 1
+                
+                # 이번 주 일요일 찾기 (월=0, ... 일=6)
+                days_left = 6 - curr_start.weekday()
+                curr_end_ideal = curr_start + timedelta(days=days_left)
+                
+                # 실제 데이터 범위 내에서 끊기 (max_d를 넘어가면 max_d까지만)
+                real_end = min(curr_end_ideal, max_d)
+                
+                # [User Rule] 5주차는 제외하고 1~4주차만 표시
+                if week_num <= 4:
+                    dynamic_weeks.append((curr_start, real_end, current_month, week_num))
+                
+                # 다음 루프 준비 (다음주 월요일)
+                curr_start = curr_end_ideal + timedelta(days=1)
+                week_num += 1
+
+            # 최신 주차가 위로 오도록 역순 정렬하여 옵션 생성
+            for i, (s_date, e_date, month, w_num) in enumerate(reversed(dynamic_weeks)):
+                label = f"{s_date.year}년 {month}월 {w_num}주차 ({s_date.strftime('%m.%d')} ~ {e_date.strftime('%m.%d')})"
+                # 리포트 API에는 해당 주차의 마지막 날짜(데이터 기준)를 전송
+                week_options[label] = str(e_date)
+                
+                # 디폴트 선택 로직 (선택된 날짜가 포함된 주차 자동 선택)
+                if target_obj and s_date <= target_obj <= e_date:
+                    default_ix = i
+
+            # UI: 주차 선택 박스
+            st.markdown("##### 📅 분석 바운더리(기간) 설정")
+            
+            options_list = list(week_options.keys())
+            
+            selected_label = st.selectbox(
+                "분석할 주차를 선택하세요", 
+                options=options_list,
+                index=default_ix if default_ix < len(options_list) else 0,
+                key=f"report_week_select_{store_id}",
+                label_visibility="collapsed"
+            )
+            report_target_date = week_options[selected_label]
+            
+        # [Refactor] 완전한 On-Demand 방식 (초기 로딩 X, 버튼 클릭 시에만 생성/조회)
+        state_key_report = f"report_data_{store_id}"
+        state_key_date = f"last_target_date_{store_id}"
+        
+        # 1. 날짜 변경 감지 -> 리포트 초기화
+        # (사용자가 주차를 바꾸면 기존 리포트는 의미가 없으므로 화면에서 즉시 제거)
+        current_loaded_date = st.session_state.get(state_key_date)
+        
+        if current_loaded_date != str(report_target_date):
+            st.session_state[state_key_report] = None
+            st.session_state[state_key_date] = str(report_target_date)
+            # 로그도 함께 초기화
+            st.session_state.pop(f"last_logs_{store_id}", None)
+            
+        # 2. Session State에서 데이터 로드 (없으면 None -> 버튼만 보임)
+        report_data = st.session_state.get(state_key_report)
+
+        col_btn1, col_btn2 = st.columns([1, 2])
+        if col_btn1.button("✨ 선택 기간 리포트 생성", key=f"gen_report_{store_id}"):
+            with st.spinner(f"AI가 {report_target_date} 기준 데이터를 분석 중입니다..."):
+                from api_utils import post_api
+                
+                # Payload 생성
+                payload = {
+                     "store_id": int(store_id), # [Fix] int64 -> int 변환 (JSON 직렬화 오류 방지)
+                     "store_name": store_name,
+                     "target_date": report_target_date
+                }
+                
+                # 생성 요청 (백엔드에서 캐시 체크 함)
+                # post_api 내부에서 API_BASE_URL 처리됨
+                result = post_api("/report/generate", payload)
+                
+                if result: 
+                    # 성공 시 State 업데이트
+                    st.session_state[f"last_logs_{store_id}"] = result.get("logs", [])
+                    st.session_state[state_key_report] = result.get("report")
+                    report_data = result.get("report")
+                    
+                    # 캐시/생성 성공 메시지
+                    if result.get("cached"):
+                        st.info("⚡ 이전에 생성된 리포트가 있어 즉시 불러왔습니다.")
+                    else:
+                        st.success(f"{report_target_date} 기준 리포트가 생성되었습니다!")
+                        st.toast("AI 리포트 생성 완료!", icon="✨")
+
+                    # 실행 로그 보여주기
+                    if "logs" in result and result["logs"]:
+                        with st.expander("📜 AI 실행 로그 확인", expanded=True):
+                            for log in result["logs"]:
+                                st.code(log)
+                else:
+                    st.error("리포트 생성에 실패했습니다.")
+
+        # [NEW] 리포트 초기화 버튼
+        if col_btn2.button("🗑️ 리포트 초기화", key=f"reset_report_{store_id}"):
+            import requests
+            from api_utils import API_BASE_URL
+            try:
+                resp = requests.delete(f"{API_BASE_URL}/report/reset/{store_id}")
+                if resp.status_code == 200:
+                    st.toast("리포트 데이터가 초기화되었습니다.", icon="🗑️")
+                    st.rerun() # 새로고침해서 초기화된 상태 반영
+                else:
+                    st.error("초기화 실패")
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+        if report_data:
+            st.divider()
+            
+            # report_date는 보통 문자열(YYYY-MM-DD)로 옴
+            from datetime import datetime, timedelta
+            
+            # 출처(Source) 변수 복구
+            source = report_data.get("source", "db")
+            
+            try:
+                # [수정] 사용자가 선택한 날짜(report_target_date)를 기준으로 기간 표시
+                # report_target_date는 위에서 이미 정의됨 (예: "2025-12-10")
+                if report_target_date:
+                    end_date = datetime.strptime(report_target_date, "%Y-%m-%d")
+                    start_date = end_date - timedelta(days=6)
+                    
+                    header_text = f"{end_date.year}년 {end_date.month}월 {end_date.day}일 기준 주차 ({start_date.strftime('%m.%d')} ~ {end_date.strftime('%m.%d')})"
+                    
+                    # 1. 메인 헤더로 기간 표시
+                    st.subheader(f"📑 {header_text}")
+                else:
+                    # 선택된 날짜가 없는 경우(최초 로딩 등) DB 데이터 사용 Fallback
+                    st.subheader(f"📑 리포트 정보: {report_data.get('report_date')}")
+                
+                # 2. 출처 배지 (작게)
+                if source == "cache":
+                    st.caption(f":blue-background[⚡ CACHE] 데이터 기반 분석")
+                else:
+                    st.caption(f":gray-background[📁 DATABASE] 데이터 기반 분석")
+                    
+            except Exception:
+                # 날짜 파싱 실패 시 원본 그대로 출력 (header_text 사용 불가)
+                 st.subheader(f"📑 리포트 정보: {report_data.get('report_date')}")
+
+            # --- 신규: 데이터 분석 근거 시각화 ---
+            # DB에서 불러올 경우 risk_assessment 안에 metrics가 들어있으므로 이를 확인
+            risk_data = report_data.get("risk_assessment", {}) or {}
+            metrics = report_data.get("metrics") or risk_data.get("metrics")
+            evidence = report_data.get("data_evidence") or risk_data.get("data_evidence")
+
+            if metrics:
+                st.markdown("#### 📊 데이터 분석 근거")
+                m_col1, m_col2, m_col3 = st.columns(3)
+                
+                total_rev = metrics.get('total_rev', 0)
+                trend = metrics.get('trend_percent', 0)
+                rating = metrics.get('avg_rating', 0)
+                
+                show_metric_card(m_col1, "총 매출 (7일)", f"{int(total_rev):,}원")
+                show_metric_card(m_col2, "매출 변동 추세", f"{trend:+.1f}%", delta=f"{trend:.1f}%")
+                show_metric_card(m_col3, "평균 리뷰 평점", f"{rating:.1f} / 5.0")
+                
+                # --- 신규: 분석에 사용된 로우 데이터(Raw Data) 시각화 ---
+                source_data = report_data.get("source_data") or risk_data.get("source_data")
+                if source_data and "recent_sales" in source_data:
+                    with st.expander("📝 Raw Data Analysis (Source)", expanded=False):
+                        st.write("AI가 분석의 근거로 활용한 세부 데이터를 확인하세요.")
+                        
+                        t1, t2 = st.tabs(["📊 매출/날씨 통합", "🍔 메뉴별 분석"])
+                        
+                        with t1:
+                            st.write("**[최근 7일 매출 및 기상 상황]**")
+                            df_source_sales = pd.DataFrame(source_data["recent_sales"])
+                            
+                            # 컬럼명 매핑
+                            col_map = {"date": "날짜", "revenue": "매출액(원)", "rev": "매출액(원)", "weather": "날씨"}
+                            df_source_sales = df_source_sales.rename(columns=col_map)
+                            
+                            # 컬럼 순서 정리 (날짜, 날씨, 매출액 순)
+                            cols = [c for c in ["날짜", "날씨", "매출액(원)"] if c in df_source_sales.columns]
+                            st.dataframe(df_source_sales[cols], hide_index=True, use_container_width=True)
+
+                        with t2:
+                            col_m1, col_m2 = st.columns(2)
+                            with col_m1:
+                                st.write("**🔥 잘 팔리는 메뉴 (Top 5)**")
+                                if "top_selling_menus" in source_data:
+                                    df_top = pd.DataFrame(source_data["top_selling_menus"])
+                                    if not df_top.empty:
+                                        st.dataframe(df_top[["menu", "recent_rev", "change_pct"]].rename(columns={"menu":"메뉴","recent_rev":"매출","change_pct":"증감%"}), hide_index=True)
+                                    else:
+                                        st.write("- 데이터 없음 -")
+                            
+                            with col_m2:
+                                st.write("**📉 급감한 메뉴 (Worst 5)**")
+                                if "worst_dropping_menus" in source_data:
+                                    df_worst = pd.DataFrame(source_data["worst_dropping_menus"])
+                                    if not df_worst.empty:
+                                        st.dataframe(df_worst[["menu", "change_pct", "prev_rev"]].rename(columns={"menu":"메뉴","change_pct":"하락%","prev_rev":"이전매출"}), hide_index=True)
+                                    else:
+                                        st.write("- 데이터 없음 -")
+                # --------------------------------------------------
+
+                if evidence:
+                    with st.expander("🧐 AI가 분석한 세부 근거 보기"):
+                        # [FIX] 마크다운 테이블/헤더가 깨지지 않도록 줄바꿈 추가
+                        st.markdown(f"**매출 분석:**\n\n{evidence.get('sales_analysis')}")
+
+            # -------------------------------
+
+            st.markdown("#### 📝 종합 분석 요약")
+            st.success(report_data['summary'])
+
+            st.markdown("#### 💡 마케팅 및 프로모션 전략")
+            st.write(report_data['marketing_strategy'])
+
+            st.markdown("#### 🛠️ 현장 운영 개선 제안")
+            st.write(report_data['operational_improvement'])
+
+            # 위험 요소 시각화
+            risk = report_data.get('risk_assessment', {})
+            if risk:
+                st.markdown("#### ⚠️ 리스크 진단")
+                risk_score = risk.get('risk_score', 0)
+                st.progress(risk_score / 100, text=f"위험 지수: {risk_score}점")
+
+                cols = st.columns(len(risk.get('main_risks', [])) or 1)
+                for i, r_text in enumerate(risk.get('main_risks', [])):
+                    cols[i].warning(r_text)
+
+                st.error(f"**긴급 제언:** {risk.get('suggestion', 'N/A')}")
+        else:
+            st.warning("아직 생성된 리포트가 없습니다. 상단의 버튼을 눌러 AI 리포트를 생성해보세요.")
+
+    if st.button("닫기"):
+        st.rerun()
+
+
+
+==================================================
+FILE_PATH: ui\styles.py
+==================================================
+
+import streamlit as st
+
+def apply_custom_styles():
+    """
+    포트폴리오용 프리미엄 CSS 스타일 적용
+    - 폰트: Pretendard
+    - 테마: Modern Dark AI Dashboard
+    """
+    st.markdown("""
+        <style>
+            /* 1. 웹폰트 로드 (Pretendard) */
+            @import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.8/dist/web/static/pretendard.css");
+
+            html, body, [class*="css"] {
+                font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif !important;
+            }
+
+            /* 2. 전체 배경 및 메인 컨테이너 */
+            .stApp {
+                background-color: #0E1117; /* Deep Dark Background */
+            }
+            
+            /* Sidebar 스타일 */
+            [data-testid="stSidebar"] {
+                background-color: #161B22;
+                border-right: 1px solid #30363D;
+            }
+
+            /* 3. 헤더 타이틀 스타일 (그라디언트 텍스트) */
+            h1 {
+                background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                font-weight: 800 !important;
+                letter-spacing: -0.02em;
+                margin-bottom: 0.5rem !important;
+            }
+            
+            /* 4. Expander (아코디언) 스타일 Upgrade */
+            .streamlit-expanderHeader {
+                background-color: #1F242C !important;
+                border-radius: 10px !important;
+                border: 1px solid #30363D !important;
+                color: #E6EDF3 !important;
+                font-size: 15px !important;
+                font-weight: 600 !important;
+                transition: all 0.2s ease-in-out;
+            }
+            .streamlit-expanderHeader:hover {
+                border-color: #4facfe !important;
+                color: #4facfe !important;
+            }
+            .streamlit-expanderContent {
+                background-color: #161B22 !important;
+                border: 1px solid #30363D;
+                border-top: none;
+                border-bottom-left-radius: 10px;
+                border-bottom-right-radius: 10px;
+                padding: 1rem !important;
+            }
+            
+            /* Expander 내부의 못생긴 화살표 아이콘 숨기기/교체 */
+            /* Streamlit 구조상 완벽 제어는 어렵지만 최대한 숨김 */
+            .streamlit-expanderHeader svg {
+                display: none !important; /* 기본 아이콘 숨김 */
+            }
+            .streamlit-expanderHeader::after {
+                content: "🔽"; /* 대체 아이콘 */
+                margin-left: auto;
+                font-size: 12px;
+                opacity: 0.7;
+            }
+
+            /* 5. Chat Message (말풍선) 스타일 */
+            [data-testid="stChatMessage"] {
+                background-color: transparent !important;
+                padding: 1rem 0;
+            }
+            /* User Message */
+            [data-testid="stChatMessage"][data-testid="user"] {
+                flex-direction: row-reverse;
+            }
+            [data-testid="chatAvatarIcon-user"] {
+                background-color: #4facfe !important;
+            }
+            
+            /* AI Message Container (내용 박스) */
+            div[data-testid="stChatMessageContent"] {
+                background-color: #1F242C;
+                border: 1px solid #30363D;
+                border-radius: 16px;
+                padding: 1.5rem;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            }
+
+            /* 6. Custom Card Styling (HTML/CSS로 직접 그리는 요소들) */
+            .metric-card {
+                background: linear-gradient(135deg, #1F242C 0%, #161B22 100%);
+                border: 1px solid #30363D;
+                border-radius: 12px;
+                padding: 16px;
+                text-align: center;
+                transition: transform 0.2s;
+            }
+            .metric-card:hover {
+                transform: translateY(-2px);
+                border-color: #4facfe;
+            }
+            .metric-label {
+                font-size: 0.85rem;
+                color: #8B949E;
+                margin-bottom: 4px;
+            }
+            .metric-value {
+                font-size: 1.5rem;
+                font-weight: 700;
+                color: #E6EDF3;
+            }
+            .metric-delta {
+                font-size: 0.8rem;
+                font-weight: 600;
+            }
+            .delta-up { color: #3FB950; }
+            .delta-down { color: #FF7B72; }
+
+            /* 7. Button Style (Primary) */
+            div.stButton > button:first-child {
+                background: linear-gradient(90deg, #2563EB 0%, #1D4ED8 100%);
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-weight: 600;
+                padding: 0.5rem 1rem;
+                transition: all 0.2s;
+            }
+            div.stButton > button:first-child:hover {
+                background: linear-gradient(90deg, #1D4ED8 0%, #1E40AF 100%);
+                box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+                transform: scale(1.02);
+            }
+            /* Secondary Button (Outline) */
+            div[data-testid="stForm"] button, div.stButton > button.secondary {
+                background: transparent;
+                border: 1px solid #30363D;
+                color: #E6EDF3;
+            }
+
+            /* 10. 가독성 개선 (Bright Text Mode) */
+            p, li, span, div {
+                color: #E6EDF3; /* 기본 텍스트를 밝은 회색/흰색에 가깝게 */
+                line-height: 1.6;
+            }
+            
+            /* 헤더 가독성 강화 */
+            h1, h2, h3, h4, h5, h6 {
+                color: #FFFFFF !important;
+            }
+            
+            /* Metric Label도 좀 더 밝게 */
+            .metric-label {
+                color: #C9D1D9 !important;
+            }
+            
+            /* 모바일 대응 (반응형) */
+            @media (max-width: 768px) {
+                html, body, [class*="css"] {
+                    font-size: 16px !important; /* 기본 폰트 사이즈 Up */
+                }
+                
+                h1 {
+                    font-size: 1.8rem !important;
+                }
+                h2 {
+                    font-size: 1.5rem !important;
+                }
+                h3 {
+                    font-size: 1.3rem !important;
+                }
+                
+                /* 모바일에서 카드 패딩 축소 */
+                .metric-card {
+                    padding: 12px !important;
+                }
+                .metric-value {
+                    font-size: 1.3rem !important;
+                }
+                
+                /* 버튼 터치 영역 확보 */
+                div.stButton > button {
+                    min-height: 50px; 
+                    font-size: 1rem !important;
+                }
+                
+                /* 입력창 텍스트 진하게 */
+                input, textarea {
+                    color: #FFFFFF !important;
+                    font-weight: 500 !important;
+                }
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
+def show_metric_card(col, label, value, delta=None):
+    """
+    Custom HTML Metric Card
+    Streamlit 기본 st.metric보다 예쁜 카드 형태
+    """
+    delta_html = ""
+    if delta:
+        color_class = "delta-up" if "+" in str(delta) or float(str(delta).replace("%","").replace(",","")) > 0 else "delta-down"
+        delta_html = f'<div class="metric-delta {color_class}">{delta}</div>'
+    
+    html = f"""
+    <div class="metric-card">
+        <div class="metric-label">{label}</div>
+        <div class="metric-value">{value}</div>
+        {delta_html}
+    </div>
+    """
+    col.markdown(html, unsafe_allow_html=True)
+
+

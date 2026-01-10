@@ -1,73 +1,106 @@
 import json
-from app.clients.openai import openai_create_embedding
+from typing import Dict, Any, List
+
+# External App Imports
 from app.clients.genai import genai_generate_with_grounding
 from app.core.db import fetch_all
-from app.inquiry.state import InquiryState
+from app.inquiry.inquiry_schema import InquiryState
 
-async def retrieval_node(state: InquiryState) -> InquiryState:
-    """
-    [Retrieval Node]
-    Manual/Policy 질문에 대해 PostgreSQL(pgvector) 검색 및 Web Search Fallback을 수행합니다.
-    """
+# ===== Step 4: Manual RAG Node (매뉴얼 검색) =====
+async def manual_node(state: InquiryState) -> InquiryState:
+    """매뉴얼 DB에서 관련 문서 검색 (Vector Search)"""
+    if state["category"] != "manual":
+        return state
+    
     question = state["question"]
-    category = state["category"] # manual or policy
     
-    print(f"📘 [Retrieval] Searching for category: {category} (using pgvector)")
+    # OpenAI Embeddings로 질문 벡터화
+    from langchain_openai import OpenAIEmbeddings
+    embeddings_model = OpenAIEmbeddings(model="text-embedding-3-small")
+    question_vector = embeddings_model.embed_query(question)
     
-    search_results = []
-    is_relevant = True
-    recommendation = {"indices": [], "comment": ""}
+    # pgvector 유사도 검색 (코사인 거리 기준 Top 3)
+    # distance가 0에 가까울수록 유사함
+    query = f"""
+    SELECT title, content, category,
+           embedding <=> '{question_vector}'::vector AS distance
+    FROM manuals
+    ORDER BY distance
+    LIMIT 5
+    """
+    
+    rows = await fetch_all(query)
+    
+    # 검색 결과 및 최소 거리 저장
+    min_distance = 1.0 # 기본값 (불일치)
+    if rows:
+        min_distance = min([r['distance'] for r in rows])
+        
+    state["manual_data"] = [
+        f"[{row['title']}] (유사도: {1 - row['distance']:.2f})\n{row['content']}"
+        for row in rows
+    ]
+    
+    if "search_meta" not in state: state["search_meta"] = {}
+    state["search_meta"] = {"min_distance": min_distance, "source": "manual_db"}
+    
+    print(f"📖 [Manual] 검색 완료 (Min Distance: {min_distance:.4f})")
+    return state
 
+
+# ===== Step 5: Policy RAG Node (정책 검색) =====
+async def policy_node(state: InquiryState) -> InquiryState:
+    """운영 정책 매뉴얼 검색 (Policies 테이블 조회)"""
+    if state["category"] != "policy":
+        return state
+    
+    question = state["question"]
+    
+    from langchain_openai import OpenAIEmbeddings
+    embeddings_model = OpenAIEmbeddings(model="text-embedding-3-small")
+    question_vector = embeddings_model.embed_query(question)
+    
+    query = f"""
+    SELECT title, content, category,
+           embedding <=> '{question_vector}'::vector AS distance
+    FROM policies
+    ORDER BY distance
+    LIMIT 5
+    """
+    
+    rows = await fetch_all(query)
+    
+    min_distance = 1.0
+    if rows:
+        min_distance = min([r['distance'] for r in rows])
+        
+    state["policy_data"] = [
+        f"[{row['title']}] (유사도: {1 - row['distance']:.2f})\n{row['content']}"
+        for row in rows
+    ]
+    
+    state["search_meta"] = {"min_distance": min_distance, "source": "policy_db"}
+    
+    print(f"📜 [Policy] 검색 완료 (Min Distance: {min_distance:.4f})")
+    return state
+
+
+# ===== Step 5.5: Web Search Node (외부 검색 - Google Grounding) =====
+async def web_search_node(state: InquiryState) -> InquiryState:
+    """내부 DB 검색 실패 시 외부 웹 검색 수행 (Google Gemini Grounding)"""
+    question = state["question"]
+    print(f"🌐 [Google Grounding] 내부 문서 부족 -> 구글 검색 수행: {question}")
+    
     try:
-        # 1. Query Embedding 생성
-        query_vector = await openai_create_embedding(question)
+        # 구글 검색 Grounding을 통한 답변 생성
+        grounded_response = await genai_generate_with_grounding(question)
         
-        # 2. SQL Vector Search
-        # 카테고리에 따라 테이블 분기 (policy -> policies, manual -> manuals)
-        table_name = "policies" if category == "policy" else "manuals"
+        # 결과 저장
+        state["manual_data"] = [f"[Google 검색 결과 기반 답변]\n{grounded_response}"]
+        state["search_meta"] = {"source": "web_search", "min_distance": 0.0}
         
-        # pgvector: <=> (Cosine Distance), <-> (L2 Distance), <#> (Inner Product)
-        # Cosine Distance 사용: 0(identical) ~ 2(opposite)
-        sql = f"""
-            SELECT content, (embedding <=> $1) as distance
-            FROM {table_name}
-            ORDER BY distance ASC
-            LIMIT 3
-        """
-        
-        # pgvector 쿼리 시 벡터 리스트를 문자열로 변환하여 전달
-        rows = await fetch_all(sql, str(query_vector))
-        
-        # 3. 결과 처리
-        if rows:
-            for row in rows:
-                dist = row['distance']
-                content = row['content']
-                search_results.append(f"[Distance: {dist:.4f}] {content}")
-                
-            # Distance Threshold (유사도 판단 기준)
-            # 0.5 이상이면 거리가 멀다고 판단 (상황에 따라 조절 필요)
-            if rows[0]['distance'] > 0.5:
-                is_relevant = False
-                recommendation["comment"] = "⚠️ 내부 문서와 유사도가 낮습니다."
-        else:
-            is_relevant = False
-            recommendation["comment"] = "관련된 내부 문서를 찾지 못했습니다."
-
-        # 4. Web Search Fallback (관련성 낮을 때)
-        if not is_relevant:
-            print("🌐 [Web Search] Triggering Gemini Grounding...")
-            web_res = await genai_generate_with_grounding(question)
-            search_results.append(f"====== [Web Search Result] ======\n{web_res}")
-
     except Exception as e:
-        print(f"❌ [Retrieval Error] {e}")
-        # DB 검색 실패 시에도 Web Search 시도
-        web_res = await genai_generate_with_grounding(question)
-        search_results.append(f"====== [Fallback Result] ======\n{web_res}")
-
-    return {
-        "search_results": search_results,
-        "is_relevant": is_relevant,
-        "recommendation": recommendation
-    }
+        print(f"❌ Google Grounding 실패: {e}")
+        state["manual_data"] = [f"외부 검색 연결에 실패했습니다. (Error: {str(e)})"]
+        
+    return state

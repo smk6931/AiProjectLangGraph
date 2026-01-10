@@ -1,0 +1,197 @@
+<!-- file:///C:/GitHub/AiProjectLangGraph/docs/data_optimization_architecture.html -->
+
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Data Optimization & RAG Architecture</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;800&display=swap');
+
+    body {
+      font-family: 'Pretendard', sans-serif;
+      background-color: #ffffff;
+      color: #1a1a1a;
+      margin: 0;
+      padding: 40px;
+      display: flex;
+      justify-content: center;
+    }
+
+    .slide-container {
+      width: 1400px;
+      background-color: #ffffff;
+      border: 1px solid #e0e0e0;
+      padding: 50px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    }
+
+    h1 {
+      color: #000000;
+      font-size: 2.8em;
+      margin-bottom: 10px;
+      border-bottom: 4px solid #000000;
+      padding-bottom: 20px;
+      letter-spacing: -1px;
+    }
+
+    .subtitle {
+      font-size: 1.4em;
+      color: #555555;
+      margin-bottom: 50px;
+      font-weight: 600;
+    }
+
+    .content-wrapper {
+      display: flex;
+      gap: 50px;
+    }
+
+    .diagram-section {
+      flex: 2;
+      background: #f8f9fa;
+      padding: 30px;
+      border-radius: 12px;
+      border: 1px solid #ddd;
+    }
+
+    .text-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 25px;
+    }
+
+    .box {
+      background-color: #f1f3f5;
+      padding: 25px;
+      border-radius: 8px;
+      border-left: 6px solid;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+    }
+
+    .box.sql {
+      border-color: #fd7e14;
+      background-color: #fff4e6;
+    }
+
+    /* Orange */
+    .box.rag {
+      border-color: #6f42c1;
+      background-color: #f3f0ff;
+    }
+
+    /* Purple */
+
+    h3 {
+      margin-top: 0;
+      color: #111;
+      font-weight: 800;
+    }
+
+    p,
+    li {
+      line-height: 1.6;
+      color: #333;
+    }
+
+    code {
+      background-color: #e9ecef;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-weight: 600;
+      color: #d6336c;
+    }
+
+    .highlight {
+      font-weight: 800;
+      color: #d6336c;
+    }
+
+    /* Mermaid Style override */
+    .mermaid {
+      display: flex;
+      justify-content: center;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="slide-container">
+    <h1>데이터 파이프라인 최적화 (Data Optimization & RAG)</h1>
+    <div class="subtitle">필요한 데이터만 정밀 타격하여 토큰 비용 최소화 및 응답 속도 최적화</div>
+
+    <div class="content-wrapper">
+      <!-- Visualization -->
+      <div class="diagram-section">
+        <div class="mermaid">
+          flowchart TD
+          User["사용자 질문 (Query)"] --> Router{"의도 분류 (Router)"}
+
+          %% Track A: Structured Data (SQL)
+          subgraph Optimization ["Track A: 정형 데이터 최적화 (Structured)"]
+          direction TB
+          Router -->|매출/메뉴 분석| SQL_Gen["동적 쿼리 생성 (Dynamic SQL)"]
+          SQL_Gen --> DB_Agg["DB 집계 연산 (Aggregation)<br />(SUM, AVG, COUNT)"]
+          DB_Agg --> Filtering["데이터 필터링 (Minimization)<br />(Limit 5, Date Range)"]
+          Filtering --> Context_A["요약 통계 데이터 (JSON)"]
+          end
+
+          %% Track B: Unstructured Data (RAG)
+          subgraph RAG ["Track B: 비정형 데이터 검색 (RAG)"]
+          direction TB
+          Router -->|규정/매뉴얼 질문| Embed["벡터 임베딩 (Embedding)"]
+          Embed --> VectorDB["임베딩 검색 (pgvector)"]
+          VectorDB --> Sim_Check["유사도 상위 추출 (Top-3)<br />(Threshold > 0.7)"]
+          Sim_Check --> Context_B["핵심 문서 청크 (Snippet)"]
+          end
+
+          Context_A --> Final_Prompt["LLM 프롬프트 조립<br />(Context Injection)"]
+          Context_B --> Final_Prompt
+          Final_Prompt --> LLM["최종 답변 생성"]
+
+          %% Styling
+          style Router fill:#fff3cd,stroke:#ffc107,stroke-width:2px
+          style Context_A fill:#fff4e6,stroke:#fd7e14
+          style Context_B fill:#f3f0ff,stroke:#6f42c1
+          style Final_Prompt fill:#e6fcf0,stroke:#00994f,stroke-width:3px
+        </div>
+      </div>
+
+      <!-- Explanation -->
+      <div class="text-section">
+
+        <div class="box sql">
+          <h3>1. SQL 최적화 (Token Saving)</h3>
+          <p>수만 건의 로우(Row)를 모두 가져오지 않고, <strong>DB 레벨에서 1차 가공</strong>하여 LLM에게 전달되는 데이터 양을 95% 이상 줄입니다.</p>
+          <ul>
+            <li><strong>Dynamic Filtering</strong>: 질문에 관련된 지점/날짜만 조회.</li>
+            <li><strong>In-DB Aggregation</strong>: Python이 아닌 DB가 합계(SUM)를 계산하여 단일 행 반환.</li>
+          </ul>
+        </div>
+
+        <div class="box rag">
+          <h3>2. RAG 정밀 타격 (Context Precision)</h3>
+          <p>수백 페이지의 매뉴얼 중 질문과 의미적으로 가장 가까운 <strong>Top-3 문맥</strong>만 추출하여 할루시네이션을 방지합니다.</p>
+          <ul>
+            <li><strong>Vector Search</strong>: 단순 키워드가 아닌 '의미(Semantic)' 기반 검색.</li>
+            <li><strong>Thresholding</strong>: 유사도가 낮은 쓰레기 정보는 Prompt에 포함시키지 않음.</li>
+          </ul>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: 'neutral', securityLevel: 'loose' });
+  </script>
+
+</body>
+
+</html>

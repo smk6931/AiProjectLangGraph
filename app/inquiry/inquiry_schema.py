@@ -3,6 +3,25 @@ from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
 from sqlalchemy.sql import func
 from pydantic import BaseModel
 from app.core.db import base
+from typing import TypedDict, List, Dict, Any
+
+# --- LangGraph State ---
+class InquiryState(TypedDict):
+    """에이전트 상태 관리"""
+    store_id: int
+    question: str
+    category: str  # Router가 분류한 카테고리
+    
+    # 각 노드에서 수집한 데이터
+    sales_data: Dict[str, Any]
+    manual_data: List[str]
+    policy_data: List[str]
+    
+    # 최종 결과
+    final_answer: str
+    inquiry_id: int
+    diagnosis_result: str # 진단 결과 요약 (새로 추가)
+
 
 class StoreInquiry(base):
     __tablename__ = "store_inquiries"
@@ -35,3 +54,5 @@ class InquiryResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+

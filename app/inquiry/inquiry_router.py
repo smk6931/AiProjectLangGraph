@@ -1,5 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
+from app.inquiry.inquiry_agent import run_search_check
+from fastapi.responses import StreamingResponse
+from app.inquiry.inquiry_agent import run_final_answer_stream
 
 router = APIRouter(prefix="/inquiry", tags=["Inquiry"])
 
@@ -9,23 +12,6 @@ class InquiryRequest(BaseModel):
     store_id: int
     question: str
 
-
-@router.post("/check", response_model=dict)
-async def check_database_search(request: InquiryRequest):
-    """
-    [Steps 1] DB 검색 & 유사도 확인 API
-    질문을 받아 내부 DB(매뉴얼/정책)를 검색하고, 
-    가장 유사한 문서와 점수를 반환합니다. (답변 생성 X)
-    """
-    from app.inquiry.inquiry_agent import run_search_check
-    
-    result = await run_search_check(request.store_id, request.question)
-    return {
-        "success": True,
-        "data": result
-    }
-
-
 class GenerateRequest(BaseModel):
     store_id: int
     question: str
@@ -34,14 +20,27 @@ class GenerateRequest(BaseModel):
     context_data: list = [] # DB 모드일 때 사용할 검색 결과 리스트
 
 
+@router.post("/check", response_model=dict)
+async def check_database_search(request: InquiryRequest):
+    """
+    [Steps 1] DB 검색 & 유사도 확인 API
+    질문을 받아 내부 DB(매뉴얼/정책)를 검색하고, 
+    가장 유사한 문서와 점수를 반환합니다. (답변 생성 X)
+    """
+    
+    result = await run_search_check(request.store_id, request.question)
+    return {
+        "success": True,
+        "data": result
+    }
+
+
 @router.post("/generate/stream")
 async def generate_answer_stream(request: GenerateRequest):
     """
     [Steps 2] 최종 답변 생성 (Streaming)
     사용자가 선택한 모드(DB or Web)에 따라 최종 답변을 스트리밍합니다.
     """
-    from fastapi.responses import StreamingResponse
-    from app.inquiry.inquiry_agent import run_final_answer_stream
     
     return StreamingResponse(
         run_final_answer_stream(

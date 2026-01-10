@@ -3,6 +3,11 @@ import pandas as pd
 import altair as alt
 from datetime import date
 from api_utils import get_api
+# 스타일 임포트
+try:
+    from styles import show_metric_card
+except ImportError:
+    from ui.styles import show_metric_card
 
 
 @st.dialog("📊 지점 매출 상세 현황", width="large")
@@ -14,11 +19,15 @@ def show_sales_dialog(store_id, store_name):
     st.divider()
 
     # 상단 탭 구성
-    tab1, tab2 = st.tabs(["📊 매출 현황", "🤖 AI 전략 리포트"])
+    tab2, tab1  = st.tabs(["AI 전략 리포트", "매출 현황"])
 
     with tab1:
-        # 일별 매출 요약 데이터 가져오기
-        sales_data = get_api(f"/order/store/{store_id}/daily_sales")
+        # [Optimize] 매출 데이터 Session State 캐싱 (반복 호출 방지)
+        cache_key_sales = f"cached_sales_{store_id}"
+        if cache_key_sales not in st.session_state:
+             st.session_state[cache_key_sales] = get_api(f"/order/store/{store_id}/daily_sales")
+        
+        sales_data = st.session_state[cache_key_sales]
 
         if sales_data:
             df_sales = pd.DataFrame(sales_data)
@@ -91,8 +100,12 @@ def show_sales_dialog(store_id, store_name):
 
             st.divider()
 
-            # 2. 날짜별 상세 내역
-            orders_data = get_api(f"/order/store/{store_id}")
+            # 2. 날짜별 상세 내역 (주문 목록 캐싱)
+            cache_key_orders = f"cached_orders_{store_id}"
+            if cache_key_orders not in st.session_state:
+                st.session_state[cache_key_orders] = get_api(f"/order/store/{store_id}")
+            
+            orders_data = st.session_state[cache_key_orders]
             if orders_data:
                 df_orders = pd.DataFrame(orders_data)
                 df_orders['ordered_at'] = pd.to_datetime(
@@ -109,9 +122,9 @@ def show_sales_dialog(store_id, store_name):
                     display_df.columns = ['메뉴명', '수량', '금액', '주문시간']
 
                     m1, m2, m3 = st.columns(3)
-                    m1.metric("선택 날짜", str(selected_date))
-                    m2.metric("총 주문", f"{len(df_day)}건")
-                    m3.metric("총 매출", f"{int(df_day['total_price'].sum()):,}원")
+                    show_metric_card(m1, "선택 날짜", str(selected_date))
+                    show_metric_card(m2, "총 주문", f"{len(df_day)}건")
+                    show_metric_card(m3, "총 매출", f"{int(df_day['total_price'].sum()):,}원")
 
                     st.dataframe(display_df, width='stretch',
                                  hide_index=True)
@@ -200,27 +213,44 @@ def show_sales_dialog(store_id, store_name):
             )
             report_target_date = week_options[selected_label]
             
-        # 최신 리포트 불러오기 (혹은 선택된 날짜의 리포트 조회가 필요하다면 API 수정 필요하지만, 일단 최신 조회 유지)
-        # TODO: 리포트 조회 API도 target_date를 받으면 좋음. 지금은 생성만 target_date 지원.
-        report_data = get_api(f"/report/latest/{store_id}")
+        # [Refactor] 완전한 On-Demand 방식 (초기 로딩 X, 버튼 클릭 시에만 생성/조회)
+        state_key_report = f"report_data_{store_id}"
+        state_key_date = f"last_target_date_{store_id}"
+        
+        # 1. 날짜 변경 감지 -> 리포트 초기화
+        # (사용자가 주차를 바꾸면 기존 리포트는 의미가 없으므로 화면에서 즉시 제거)
+        current_loaded_date = st.session_state.get(state_key_date)
+        
+        if current_loaded_date != str(report_target_date):
+            st.session_state[state_key_report] = None
+            st.session_state[state_key_date] = str(report_target_date)
+            # 로그도 함께 초기화
+            st.session_state.pop(f"last_logs_{store_id}", None)
+            
+        # 2. Session State에서 데이터 로드 (없으면 None -> 버튼만 보임)
+        report_data = st.session_state.get(state_key_report)
 
         col_btn1, col_btn2 = st.columns([1, 2])
         if col_btn1.button("✨ 선택 기간 리포트 생성", key=f"gen_report_{store_id}"):
             with st.spinner(f"AI가 {report_target_date} 기준 데이터를 분석 중입니다..."):
-                import requests
-                from api_utils import API_BASE_URL
+                from api_utils import post_api
                 
-                params = {
-                    "store_name": store_name, 
-                    "mode": "sequential",
-                    "target_date": report_target_date # [NEW] 선택된 날짜 전달
+                # Payload 생성
+                payload = {
+                     "store_id": int(store_id), # [Fix] int64 -> int 변환 (JSON 직렬화 오류 방지)
+                     "store_name": store_name,
+                     "target_date": report_target_date
                 }
                 
-                resp = requests.post(
-                    f"{API_BASE_URL}/report/generate/{store_id}", params=params)
-
-                if resp.status_code == 200:
-                    result = resp.json()
+                # 생성 요청 (백엔드에서 캐시 체크 함)
+                # post_api 내부에서 API_BASE_URL 처리됨
+                result = post_api("/report/generate", payload)
+                
+                if result: 
+                    # 성공 시 State 업데이트
+                    st.session_state[f"last_logs_{store_id}"] = result.get("logs", [])
+                    st.session_state[state_key_report] = result.get("report")
+                    report_data = result.get("report")
                     
                     # 캐시/생성 성공 메시지
                     if result.get("cached"):
@@ -234,21 +264,23 @@ def show_sales_dialog(store_id, store_name):
                         with st.expander("📜 AI 실행 로그 확인", expanded=True):
                             for log in result["logs"]:
                                 st.code(log)
-
-                    st.session_state[f"last_logs_{store_id}"] = result.get("logs", [])
-                    # 바로 보여주기 위해 변수 업데이트
-                    report_data = result.get("report") 
                 else:
                     st.error("리포트 생성에 실패했습니다.")
 
-        # [NEW] 리포트 초기화 버튼
-        if col_btn2.button("🗑️ 리포트 초기화", key=f"reset_report_{store_id}"):
+        # [NEW] 리포트 초기화 버튼 (All System Reset)
+        if col_btn2.button(" 시스템 전체 리포트 초기화", key=f"reset_report_{store_id}", help="DB, Redis, 로컬 캐시에 저장된 모든 리포트 데이터를 삭제합니다."):
             import requests
             from api_utils import API_BASE_URL
             try:
-                resp = requests.delete(f"{API_BASE_URL}/report/reset/{store_id}")
+                # [Fix] 전체 초기화 API 호출(/reset-all)
+                resp = requests.delete(f"{API_BASE_URL}/report/reset-all")
+                
                 if resp.status_code == 200:
-                    st.toast("리포트 데이터가 초기화되었습니다.", icon="🗑️")
+                    # [Fix] 서버 데이터 삭제 후, 로컬 세션(화면) 데이터도 즉시 제거해야 함
+                    st.session_state.pop(state_key_report, None)
+                    st.session_state.pop(f"last_logs_{store_id}", None)
+                    
+                    st.toast("시스템 내 모든 리포트 데이터가 초기화되었습니다.", icon="")
                     st.rerun() # 새로고침해서 초기화된 상태 반영
                 else:
                     st.error("초기화 실패")
@@ -303,17 +335,17 @@ def show_sales_dialog(store_id, store_name):
                 trend = metrics.get('trend_percent', 0)
                 rating = metrics.get('avg_rating', 0)
                 
-                m_col1.metric("총 매출 (7일)", f"{int(total_rev):,}원")
-                m_col2.metric("매출 변동 추세", f"{trend:+.1f}%", delta=f"{trend:.1f}%")
-                m_col3.metric("평균 리뷰 평점", f"{rating:.1f} / 5.0")
+                show_metric_card(m_col1, "총 매출 (7일)", f"{int(total_rev):,}원")
+                show_metric_card(m_col2, "매출 변동 추세", f"{trend:+.1f}%", delta=f"{trend:.1f}%")
+                show_metric_card(m_col3, "평균 리뷰 평점", f"{rating:.1f} / 5.0")
                 
                 # --- 신규: 분석에 사용된 로우 데이터(Raw Data) 시각화 ---
                 source_data = report_data.get("source_data") or risk_data.get("source_data")
                 if source_data and "recent_sales" in source_data:
-                    with st.expander("📝 분석에 사용된 기초 데이터 확인 (메뉴/요인별)", expanded=False):
+                    with st.expander("📝 Raw Data Analysis (Source)", expanded=False):
                         st.write("AI가 분석의 근거로 활용한 세부 데이터를 확인하세요.")
                         
-                        t1, t2, t3 = st.tabs(["📊 매출/날씨 통합", "🍔 메뉴별 분석", "📅 요일/시간 분석"])
+                        t1, t2 = st.tabs(["📊 매출/날씨 통합", "🍔 메뉴별 분석"])
                         
                         with t1:
                             st.write("**[최근 7일 매출 및 기상 상황]**")
@@ -346,18 +378,6 @@ def show_sales_dialog(store_id, store_name):
                                         st.dataframe(df_worst[["menu", "change_pct", "prev_rev"]].rename(columns={"menu":"메뉴","change_pct":"하락%","prev_rev":"이전매출"}), hide_index=True)
                                     else:
                                         st.write("- 데이터 없음 -")
-
-                        with t3:
-                            st.write("**[평일 vs 주말 매출 변동]**")
-                            if "day_analysis" in source_data:
-                                df_day = pd.DataFrame(source_data["day_analysis"])
-                                if not df_day.empty:
-                                    # 보기 좋게 전처리
-                                    df_day = df_day[["type", "recent", "prev", "trend"]]
-                                    df_day.columns = ["구분", "최근매출", "이전매출", "변동률(%)"]
-                                    st.dataframe(df_day, hide_index=True, use_container_width=True)
-                            else:
-                                st.info("요일별 분석 데이터가 없습니다.")
                 # --------------------------------------------------
 
                 if evidence:

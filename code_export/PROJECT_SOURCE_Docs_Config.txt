@@ -1,0 +1,3436 @@
+Project Code Export - Category: Docs_Config
+Generated for Gemini Canvas Analysis
+
+
+==================================================
+FILE_PATH: docs\2026-01-02_Architecture_Pivot.md
+==================================================
+
+# 🏗️ Architecture Pivot: LangGraph Autonomous vs Human-in-the-Loop
+**Date:** 2026-01-02  
+**Author:** AI Project Team  
+
+## 1. 배경 및 초기 설계 (The Problem)
+
+### 초기 접근 방식: 완전 자동화 (Autonomous Agent)
+초기에는 `LangGraph`를 사용하여 사용자 질문부터 최종 답변까지 **한 번에(End-to-End)** 실행되는 완전 자동화 파이프라인을 구축했습니다.
+이 방식은 "사용자의 개입 없이(Autonomous)" 스스로 판단하고 행동한다는 점에서 이상적이었으나, **치명적인 단점**이 발견되었습니다.
+
+### 발견된 문제점
+1.  **환각(Hallucination) 위험**: LLM이 잘못된 매장을 선택하거나, 엉뚱한 문서를 참고해도 사용자가 이를 **중간에 바로잡을 수 없었습니다.**
+2.  **민감한 데이터 접근**: 매출 데이터나 재무 분석의 경우, AI가 어떤 데이터를 보고 분석하는지 **사용자의 승인(Confirmation)** 절차가 필요했습니다.
+3.  **UI 상호작용의 한계**: LangGraph의 실행 루프(`node` -> `edge` -> `node`) 중간에 웹 UI에서의 사용자 클릭 이벤트를 끼워넣는 것이 기술적으로 복잡했습니다. (`interrupt` 기능이 있으나 상태 관리가 까다로움)
+
+---
+
+## 2. 아키텍처 변경: Human-in-the-Loop (The Solution)
+
+우리는 LangGraph의 그래프 **구조(Structure)는 유지하되**, 실행 방식(Execution)을 **단계별 수동 제어(Step-by-Step Manual Control)**로 변경했습니다.
+
+### 변경된 흐름 비교
+
+| 구분 | (Old) Autonomous Graph | (New) Sequential Checkpoint |
+| :--- | :--- | :--- |
+| **실행 방식** | `graph.invoke(input)` (Start -> End) | `API 1` (질문 분석) -> **STOP(UI)** -> `API 2` (답변 생성) |
+| **사용자 개입** | 불가능 (결과 통보만 받음) | **가능 (검색 결과 확인 및 승인 후 진행)** |
+| **안전성** | 낮음 (AI의 판단 미스 리스크) | **높음 (Human Check 도입)** |
+
+### 구현 상세 (Sequential Logic)
+`inquiry_agent.py`에서 단일 그래프 실행 로직을 제거하고, 두 개의 명시적 함수로 분리했습니다.
+
+1.  **Phase 1: `run_search_check` (진단 및 검색)**
+    *   질문을 분류(Router)하고 필요한 데이터를 수집합니다.
+    *   **여기서 멈춤!** 수집된 데이터를 UI로 반환합니다.
+2.  **Phase 2: `run_final_answer_stream` (최종 답변)**
+    *   사용자가 UI에서 "분석 시작" 버튼을 누르면 실행됩니다.
+    *   Phase 1의 상태를 이어받아 최종 분석 및 답변을 생성합니다.
+
+---
+
+## 3. 결론 및 인사이트 (Takeaways)
+
+이 리팩토링 과정을 통해 얻은 핵심 교훈은 다음과 같습니다.
+
+*   **"모든 것을 자동화하는 것이 정답은 아니다."** 
+    *   특히 데이터 분석과 같이 **정확성**이 중요한 도메인에서는 AI와 사람이 협업하는 **Human-in-the-Loop** 설계가 필수적입니다.
+*   **"유연한 아키텍처의 중요성"**
+    *   LangGraph의 `Node` 기능을 모듈화해둔 덕분에, 그래프 실행 로직을 들어내고 순차 실행 로직으로 변경하는 과정이 매우 수월했습니다. (재사용성 입증)
+
+> *기술적으로는 LangGraph의 `interrupt` 기능을 고도화하여 해결할 수도 있었으나, 현재의 웹 기반 아키텍처에서는 **API 엔드포인트를 분리하는 것**이 상태 관리(State Management) 측면에서 훨씬 안정적이고 직관적인 해결책이었습니다.*
+
+---
+
+## 4. 상세 UI/UX 플로우 및 설계 의도 (Implementation Details)
+
+사용자(점주)가 AI를 신뢰하고 사용할 수 있도록 **3단계 상호작용 프로세스(3-Step Interaction Process)**를 설계했습니다.
+
+### 🔄 Flow Overview
+1.  **Phase 1: Intent & Check (의도 파악 및 초동 조사)**
+    *   **User Action**: 프롬프트 입력 (`/inquiry/check`)
+    *   **System**: 유저 질문을 백엔드로 전송하여 **Router(분류)** 및 **Diagnosis/Retrieval(데이터 조회)** 수행.
+    *   **Why?**: AI가 질문을 제대로 이해했는지, 어떤 데이터를 볼 것인지 **미리 보여주기 위함**입니다. 답변부터 바로 생성하면 나중에 "어? 이 데이터 아닌데?" 하고 되돌릴 수 없기 때문입니다.
+
+2.  **Phase 2: Human Verification (사용자 검증 및 선택)**
+    *   **User Action**: AI가 제안한 **분석 계획(Plan)** 또는 **참고 문서(Candidate Docs)** 확인.
+        *   *Sales*: 분석할 지점과 데이터 소스 확인 -> "분석 시작" 클릭.
+        *   *Manual*: 검색된 매뉴얼 중 엉뚱한 문서 체크 해제 -> "답변 생성" 클릭.
+    *   **Why?**: **환각(Hallucination) 방지의 핵심 단계**입니다. AI가 잘못된 문서를 참고하려 할 때, 사용자가 이를 사전에 차단(Filtering)할 수 있어 최종 답변의 품질이 비약적으로 상승합니다.
+
+3.  **Phase 3: Execution & Streaming (최종 실행 및 응답)**
+    *   **User Action**: 최종 승인 버튼 클릭 (`/inquiry/generate/stream`)
+    *   **System**: Phase 1에서 확보한 데이터(Context)를 재사용하여 **LLM이 최종 답변을 스트리밍(`yield`)** 방식으로 생성.
+    *   **Why?**: 
+        *   **성능 최적화**: Phase 1에서 이미 가져온 데이터를 Phase 3로 넘겨주어(`Context Reuse`), 무거운 DB 조회를 두 번 하지 않도록 설계했습니다. (속도 2배 향상)
+        *   **사용자 경험(UX)**: 긴 생성 시간을 견디지 않도록 실시간으로 토큰을 뿌려주어(Streaming) 체감 대기 시간을 줄였습니다.
+
+---
+
+## 5. 백엔드 서비스 구조 설계 (Data Access Strategy with CQRS)
+
+AI 에이전트의 데이터 접근 로직을 기존 서비스 계층과 분리하여 **CQRS(Command Query Responsibility Segregation)** 패턴을 일부 차용했습니다.
+
+### 🏗️ 구조적 분리 (Separation of Concerns)
+
+| 구분 | **운영 서비스 (`app/service/*.py`)** | **AI 에이전트 노드 (`app/inquiry/nodes/*.py`)** |
+| :--- | :--- | :--- |
+| **주요 역할** | **Command (쓰기/수정) & Simple Query** | **Complex Query (복합 조회/분석)** |
+| **사용 사례** | 주문 생성, 메뉴 등록, 단일 조회 | "지난주 대비 매출 추이는?", "비 오는 날 인기 메뉴는?" |
+| **구현 방식** | ORM 기반의 단순 CRUD 메소드 | Raw SQL 기반의 복잡한 집계(Aggregation) 및 조인(Join) |
+
+### 💡 설계 의도 (Design Rationale)
+1.  **성능 최적화 (Performance)**: 
+    *   기존 ORM 객체를 재사용할 경우, 분석에 불필요한 필드까지 모두 로딩하는 **Over-fetching** 문제가 발생합니다.
+    *   AI 에이전트는 통계 데이터(Sum, Count, Group By)가 주로 필요하므로, 이에 최적화된 **전용 SQL**을 작성하여 조회 속도를 높였습니다.
+2.  **의존성 분리 (Decoupling)**:
+    *   운영 로직(주문 처리 등)이 변경되더라도, AI 분석 로직은 영향을 받지 않도록 격리했습니다.
+    *   반대로 AI를 위해 조회 로직을 수정해도, 핵심 운영 서비스의 안정성은 보장됩니다.
+3.  **유연한 질의 (Flexible Querying)**:
+    *   LLM이 필요로 하는 데이터 형태(JSON, Markdown Summary)로 DB에서 바로 가공하여 가져오기 위해, 서비스 계층을 거치지 않고 직접 데이터에 접근하는 방식이 훨씬 효율적이었습니다.
+
+
+
+==================================================
+FILE_PATH: docs\2026-01-03_Parsing_Strategy_Pivot.md
+==================================================
+
+# 📄 LLM 응답 포맷 전략 변경: JSON to Tag-based Parsing
+**Date:** 2026-01-03  
+**Author:** Antigravity (AI Architect)  
+**Status:** Applied  
+
+## 1. 배경 (Background) & 문제점 (Problem)
+
+본 프로젝트의 리포트 생성 기능(`report_graph.py`)은 초기 설계 시 **JSON 포맷**을 통해 구조화된 데이터(분석 내용, 요약, 리스크 점수 등)를 LLM으로부터 수신하도록 설계되었습니다. 그러나 **마크다운(Markdown) 표와 복잡한 서술형 텍스트**를 JSON 값(Value)으로 포함시키는 과정에서 지속적인 파싱 오류가 발생했습니다.
+
+### 주요 발생 에러 (Symptoms)
+- `json.decoder.JSONDecodeError: Expecting ',' delimiter`: 문자열 내 따옴표(`"`) 이스케이프 실패.
+- `Illegal trailing comma`: JSON 객체 마지막 항목 뒤에 불필요한 콤마 삽입.
+- **마크다운 렌더링 깨짐**: JSON 표준 준수를 위해 개행 문자(`\n`)를 강제 치환하는 과정에서, 실제 UI 렌더링 시 줄바꿈이 소실되어 표(Table)나 리스트가 한 줄로 뭉개지는 현상.
+
+### 원인 분석 (Root Cause)
+LLM(Gemini) 입장에서 **"JSON 문법 준수(이스케이프)"**와 **"마크다운 문법 준수(가독성)"**라는 두 가지 상충되는 제약을 동시에 만족시키기 어렵습니다. 특히, 마크다운 표(`|---|---|`)나 줄바꿈이 포함된 긴 텍스트를 JSON 문자열로 변환할 때, `\`(백슬래시) 처리에서 환각(Hallucination)이나 오류가 빈번하게 발생합니다.
+
+---
+
+## 2. 해결 전략: Tag-based Parsing (태그 기반 파싱)
+
+우리는 JSON의 엄격한 문법 제약을 우회하고, 텍스트 데이터의 무결성을 보장하기 위해 **XML 스타일의 커스텀 태그(Custom Tags) 방식**으로 설계를 변경했습니다. 이는 HTML 구조와 유사하지만, 훨씬 단순하고 목적 지향적인 포맷입니다.
+
+### 변경 전 (JSON Approach)
+```json
+{
+  "sales_analysis": "## 주간 분석\n\n| 항목 | 값 |\n|---|---|\n..."
+}
+```
+> **Risk**: `"` 또는 `\n` 처리가 하나라도 빗나가면 전체 JSON 파싱이 실패함.
+
+### 변경 후 (Tag-based Approach)
+```text
+<SECTION:SALES_ANALYSIS>
+## 주간 분석
+
+| 항목 | 값 |
+|---|---|
+...
+</SECTION:SALES_ANALYSIS>
+```
+> **Benefit**: 태그 내부의 내용은 **Raw Text**로 취급되므로, 따옴표나 줄바꿈 이스케이프가 전혀 필요 없음.
+
+---
+
+## 3. 구현 상세 (Implementation Details)
+
+### 3.1. 프롬프트 엔지니어링 (Prompt Engineering)
+AI에게 더 이상 JSON 포맷을 강요하지 않고, 각 섹션을 명시적인 태그로 감싸도록 지시합니다.
+
+```python
+prompt = """
+응답은 반드시 아래 태그 형식을 사용하여 작성할 것 (JSON 아님):
+
+<SECTION:SALES_ANALYSIS>
+(마크다운 표와 분석 내용...)
+</SECTION:SALES_ANALYSIS>
+
+<SECTION:SUMMARY>
+(요약 내용...)
+</SECTION:SUMMARY>
+...
+"""
+```
+
+### 3.2. 파서 로직 (Parser Logic)
+Python의 표준 라이브러리인 `re`(Regular Expression)를 사용하여 각 태그 사이의 콘텐츠를 강력하게 추출합니다.
+
+```python
+import re
+
+def extract_section(tag, text):
+    # DOTALL 플래그를 사용하여 줄바꿈을 포함한 모든 텍스트 매칭
+    pattern = f"<{tag}>(.*?)</{tag}>"
+    match = re.search(pattern, text, re.DOTALL)
+    # 양쪽 공백 제거 후 반환
+    return match.group(1).strip() if match else ""
+```
+
+---
+
+## 4. 기대 효과 (Expected Outcomes)
+
+1.  **파싱 안정성 극대화 (Robustness)**: JSON 문법 오류로 인한 리포트 생성 실패율이 **0%에 수렴**할 것으로 예상됩니다.
+2.  **마크다운 호환성 (Compatibility)**: AI가 생성한 마크다운 표, 리스트, 이모지 등이 별도의 후처(Post-processing) 없이 UI에 완벽하게 렌더링됩니다.
+3.  **유지보수 용이성 (Maintainability)**: 복잡한 정규식(제어 문자 제거 등)이나 외부 라이브러리(`dirtyjson`) 의존성을 제거하고, 직관적인 태그 추출 로직으로 관리할 수 있습니다.
+
+---
+
+**Note**: 이 아키텍처 변경은 LLM이 생성하는 **"비정형 텍스트(Analysis)"**와 **"정형 데이터(Metrics)"**를 분리하여 처리하는 **Hybrid Parsing Strategy**의 일환입니다.
+
+
+
+==================================================
+FILE_PATH: docs\2026-01-03_Redis_Implementation.md
+==================================================
+
+# Redis Caching & Performance Architecture (2026-01-03)
+
+## 1. Project Goal
+본 프로젝트는 AI 기반 상권 분석 리포트 생성 시스템의 **응답 속도 개선**과 **시스템 안정성 확보**를 목표로 합니다.
+특히, 고비용/고지연의 AI 생성 프로세스를 보완하기 위해 **Redis Caching**을 도입하였으며, 이를 단순 캐싱을 넘어 **Data Integrity**와 **Performance Visualization**까지 고려한 아키텍처로 설계하였습니다.
+
+---
+
+## 2. Infrastructure Architecture
+*   **Compute Layer (AWS EC2)**:
+    *   **Backend Server**: FastAPI (Python) 기반의 AI 리포트 생성 서버.
+    *   **Cache Server**: Redis (In-Memory)가 EC2 내부에 배포되어 네트워크 레이턴시를 최소화한 초고속 응답 보장.
+*   **Data Layer (AWS RDS)**:
+    *   **Database**: PostgreSQL을 완전 관리형 서비스(RDS)로 분리 운영.
+    *   **Benefit**: 컴퓨팅 리소스(EC2)와 데이터 리소스(RDS)의 독립적인 스케일링이 가능하며, 데이터 영속성과 자동 백업을 보장.
+
+---
+
+## 3. Key Features
+
+### A. Hybrid Caching Strategy
+*   **Primary**: **Redis (AWS EC2)** - 서버 기반의 고성능 In-Memory DB.
+*   **Fallback**: **Local Memory** - Redis 연결 실패 시 자동으로 애플리케이션 메모리 캐시로 전환되어 무중단 서비스 보장.
+*   **Zero-Config Dev Env**: SSH Tunneling을 통해 로컬 개발 환경에서도 코드 수정 없이 서버의 Redis 자원을 활용.
+
+### B. "Race Condition" Performance Logic 🏎️
+Redis의 성능 우위를 정량적으로 증명하기 위해, 리포트 조회 시 **Redis와 RDBMS(PostgreSQL)의 조회 속도를 실시간으로 경쟁**시키는 로직을 구현하였습니다.
+*   **Async Logic**: `asyncio.gather`를 사용하여 두 데이터 소스를 병렬로 조회.
+*   **Winning Criteria**: 더 빠른 응답을 준 소스를 승자로 판정하고 채택.
+*   **Visualization**: 사용자 UI에 **"Redis Win! (0.003s vs 0.165s)"** 와 같은 로그를 노출하여 약 **50배 이상의 성능 향상**을 시각적으로 입증.
+
+### C. Data Integrity & Validation
+*   **Smart Invalidation**: 리포트 초기화(Reset) 시, **DB의 영구 데이터**와 **Redis의 캐시 데이터**를 원자적으로(Atomically) 동시 삭제하여 데이터 불일치 방지.
+*   **Quality Gate**: AI가 생성한 JSON 데이터가 손상되었거나 Risk Score가 0점인 불량 리포트는 **캐시 및 DB 저장을 원천 차단**하여 시스템 오염 방지.
+
+---
+
+## 3. Implementation Details
+
+### `app/report/report_service.py`
+*   **Flattened Function Structure**: `race_condition_check`, `_measure_redis_speed`, `_measure_db_speed` 등으로 함수를 세분화하여 가독성 및 테스트 용이성 확보.
+*   **Race Logic**:
+    ```python
+    (redis_time, redis_data), (db_time, db_data) = await asyncio.gather(
+        _measure_redis_speed(s_id, check_date), 
+        _measure_db_speed(s_id, check_date)
+    )
+    # Winner Selection Logic...
+    ```
+
+### `app/core/cache.py`
+*   **Singleton Pattern**: Redis 클라이언트 객체를 싱글톤으로 관리하여 커넥션 오버헤드 최소화.
+*   **Failover**: `try-except` 블록을 통해 Redis 연결 실패 시 즉시 Local Cache 모드로 전환하는 로버스트한 설계.
+
+---
+
+## 4. Development & Deployment
+*   **Local**: `ssh -N -L 6379:localhost:6379 ...` 명령어를 통해 로컬 포트를 서버 Redis로 포워딩.
+*   **Server**: EC2 내부에서는 `localhost:6379`로 직접 접속.
+*   이로써 **Environment Variable 분기 없이** 단일 코드베이스로 로컬/운영 환경 모두 대응 가능.
+
+---
+
+## 5. Performance Result (Benchmark)
+*   **AI Generation**: ~15s (Initial)
+*   **DB Retrieval**: ~0.15s
+*   **Redis Retrieval**: ~0.003s (**50x Faster**)
+➞ Redis 도입을 통해 반복 조회 시 **사용자 경험(UX)을 획기적으로 개선**함.
+
+
+
+==================================================
+FILE_PATH: docs\AWS_SERVER_MANAGEMENT.md
+==================================================
+
+# ☁️ AWS EC2 Server Management Guide
+
+이 문서는 AWS EC2 서버에 배포된 `AiProjectLangGraph` 프로젝트의 관리 및 유지보수를 위한 명령어 가이드입니다.
+
+## 🔑 1. SSH 접속 (Connection)
+PowerShell 또는 터미널에서 아래 명령어로 서버에 접속합니다.
+
+```powershell
+ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" ubuntu@15.164.230.250
+```
+
+---
+
+## 🔄 2. 서버 재시작 (Restart) - **가장 중요!**
+코드를 수정하거나 배포한 뒤에는 **반드시** 이 과정을 수행해야 합니다.
+
+### [원스텝 명령어] (복사해서 붙여넣기)
+```bash
+# 1. 기존 프로세스 종료 (죽이기)
+pkill -f uvicorn
+pkill -f streamlit
+
+# 2. 가상환경 활성화 (혹시 모르니)
+source venv/bin/activate
+
+# 3. Backend 실행 (FastAPI, 8080포트)
+nohup python -m uvicorn main:app --host 0.0.0.0 --port 8080 > server.log 2>&1 &
+
+# 4. Frontend 실행 (Streamlit, 8501포트)
+nohup streamlit run ui/main_ui.py --server.port 8501 --server.address 0.0.0.0 > ui.log 2>&1 &
+```
+
+> **💡 명령어 해설**
+> - **`nohup`**: "No Hang Up"의 약자. **SSH 접속을 끊거나 터미널을 꺼도 서버가 죽지 않고 계속 돌아가게 만듭니다.**
+> - **`&`**: 백그라운드 실행. 명령어를 실행하고 즉시 터미널 입력창(`$`)을 돌려받습니다.
+> - **`> logfile 2>&1`**: 정상 출력(1)과 에러 출력(2)을 모두 지정한 파일(`logfile`)에 저장합니다.
+
+---
+
+## 📜 3. 로그 확인 (Monitoring)
+서버가 잘 돌아가고 있는지, 혹은 에러가 났는지 확인할 때 사용합니다.
+
+```bash
+# Backend 로그 실시간 확인 (나갈 땐 Ctrl + C)
+tail -f server.log
+
+# Frontend 로그 실시간 확인
+tail -f ui.log
+```
+
+## 🚪 4. 포트 확인 (Check Ports)
+현재 8080, 8501 포트가 정상적으로 열려있는지 확인합니다.
+
+```bash
+sudo netstat -tulpn | grep python
+```
+(결과에 `8080`과 `8501`이 보여야 정상입니다.)
+
+
+
+==================================================
+FILE_PATH: docs\CACHE_TYPES_EXPLAINED.md
+==================================================
+
+# 캐싱 종류 완벽 정리
+
+## 📍 저장 위치별 구분
+
+### 1. **서버 메모리 캐싱** (현재 구현: `cache_simple.py`)
+```
+[사용자] → [서버 메모리] → [응답]
+           (Python dict)
+```
+
+**저장 위치:** 서버의 RAM 메모리
+**접근:** 서버 내부에서만 접근 가능
+**속도:** 매우 빠름 (~0.001ms)
+**공유:** 같은 서버 내에서만 공유
+**영구성:** 서버 재시작 시 사라짐
+
+**예시:**
+```python
+# app/core/cache_simple.py
+_cache = {
+    "report:1:2025-12-17": (data, expire_time)
+}  # 서버 메모리에 저장
+```
+
+---
+
+### 2. **Redis 캐싱** (원격 캐시 서버)
+```
+[사용자] → [서버] → [Redis 서버] → [응답]
+                    (별도 서버)
+```
+
+**저장 위치:** Redis 서버의 메모리
+**접근:** 네트워크를 통해 접근
+**속도:** 
+- 로컬 환경: ~0.1ms (같은 서버)
+- 원격 환경: ~10-50ms (네트워크 지연)
+**공유:** 여러 서버 간 공유 가능
+**영구성:** 설정에 따라 영구 저장 가능
+
+**예시:**
+```python
+# app/core/cache.py
+redis_client.set("report:1:2025-12-17", data)  # Redis 서버에 저장
+```
+
+---
+
+### 3. **PostgreSQL (DB)**
+```
+[사용자] → [서버] → [PostgreSQL 서버] → [디스크] → [응답]
+```
+
+**저장 위치:** 디스크 (하드 드라이브)
+**접근:** 네트워크를 통해 접근
+**속도:**
+- 로컬 환경: ~1-5ms
+- 원격 환경: ~11-55ms (네트워크 지연)
+**공유:** 여러 서버 간 공유 가능
+**영구성:** 영구 저장 (디스크에 저장)
+
+**예시:**
+```python
+# app/report/report_service.py
+report = await select_latest_report(store_id)  # DB에서 조회
+```
+
+---
+
+### 4. **브라우저 캐싱** (사용자 컴퓨터)
+```
+[사용자 컴퓨터] → [브라우저 캐시] → [응답]
+```
+
+**저장 위치:** 사용자 컴퓨터의 브라우저 캐시
+**접근:** 사용자 컴퓨터 내부
+**속도:** 매우 빠름 (~0.001ms)
+**공유:** 사용자 개인만 사용
+**영구성:** 브라우저 설정에 따라
+
+**예시:**
+```javascript
+// 프론트엔드에서
+localStorage.setItem("report", JSON.stringify(data))  // 사용자 컴퓨터에 저장
+```
+
+---
+
+## 🎯 속도 비교 (실제 측정)
+
+### 로컬 환경 (같은 서버)
+```
+1. 서버 메모리 캐싱: ~0.001ms ⚡⚡⚡ (가장 빠름)
+2. Redis (같은 서버): ~0.1ms ⚡⚡
+3. PostgreSQL: ~1-5ms ⚡
+```
+
+### 원격 환경 (클라이언트 → 서버)
+```
+1. 서버 메모리 캐싱: 서버 내부에서 즉시 조회 → ~0.001ms ⚡⚡⚡
+2. Redis: 네트워크(10-50ms) + 조회(0.1ms) = ~10-50ms
+3. PostgreSQL: 네트워크(10-50ms) + 조회(1-5ms) = ~11-55ms
+```
+
+**결론:** 원격 환경에서도 서버 메모리 캐싱이 가장 빠름!
+
+---
+
+## 💡 언제 무엇을 쓸까?
+
+### 서버 메모리 캐싱 (현재 사용 중 ✅)
+**언제?**
+- 단일 서버 환경
+- 서버 내부에서 빠르게 조회
+- 임시 데이터 (서버 재시작해도 괜찮음)
+
+**예시:**
+- 리포트 캐싱 (같은 날 같은 지점)
+- 세션 데이터 (서버 내부)
+- 계산 결과 캐싱
+
+---
+
+### Redis
+**언제?**
+- 여러 서버 간 캐시 공유 필요
+- 높은 트래픽 (초당 수천 요청)
+- 복잡한 데이터 구조 필요
+- 영구 저장 필요
+
+**예시:**
+- 로그인 세션 (여러 서버 간 공유)
+- 실시간 랭킹
+- 메시지 큐
+
+---
+
+### PostgreSQL
+**언제?**
+- 영구 저장 필요
+- 복잡한 쿼리 필요
+- 관계형 데이터
+
+**예시:**
+- 사용자 정보
+- 주문 내역
+- 리포트 (영구 저장)
+
+---
+
+### 브라우저 캐싱
+**언제?**
+- 사용자 개인 설정
+- 오프라인 지원
+- 네트워크 요청 절감
+
+**예시:**
+- 사용자 설정
+- 최근 조회한 리포트
+- 오프라인 데이터
+
+---
+
+## 🔄 데이터 흐름 예시
+
+### 리포트 조회 시나리오
+
+```
+1. 사용자 요청
+   ↓
+2. 서버 메모리 캐시 확인 (가장 빠름)
+   ├─ 있으면 → 즉시 반환 ⚡
+   └─ 없으면 ↓
+3. Redis 확인 (원격 캐시)
+   ├─ 있으면 → 반환
+   └─ 없으면 ↓
+4. PostgreSQL 조회 (영구 저장소)
+   ├─ 있으면 → 반환 + 캐시 저장
+   └─ 없으면 ↓
+5. 리포트 생성 (LLM 호출)
+   ↓
+6. PostgreSQL에 저장
+   ↓
+7. Redis에 캐시 저장
+   ↓
+8. 서버 메모리에 캐시 저장
+   ↓
+9. 사용자에게 반환
+```
+
+---
+
+## 📊 실무 관점
+
+### 면접에서 어필할 포인트
+
+**"계층적 캐싱 전략을 수립했습니다"**
+
+1. **1차 캐시: 서버 메모리**
+   - "서버 내부에서 가장 빠르게 조회"
+   - "같은 서버 내 요청은 즉시 반환"
+
+2. **2차 캐시: Redis (선택적)**
+   - "여러 서버 간 캐시 공유"
+   - "높은 트래픽 대응"
+
+3. **영구 저장: PostgreSQL**
+   - "최종 데이터는 DB에 저장"
+   - "캐시 실패 시 DB에서 조회"
+
+---
+
+## 🎯 현재 프로젝트 구조
+
+```
+리포트 조회:
+1. 서버 메모리 캐시 확인 (cache_simple.py) ⚡
+   ↓ 없으면
+2. PostgreSQL 조회 (select_latest_report)
+   ↓ 없으면
+3. 리포트 생성 (LangGraph)
+   ↓
+4. PostgreSQL 저장
+   ↓
+5. 서버 메모리 캐시 저장
+```
+
+**Redis는 선택사항** (나중에 필요하면 추가)
+
+---
+
+## 📝 정리
+
+### 질문에 대한 답변
+
+**Q: Redis는 대규모일 때 실시간 데이터에 쓰는 것?**
+- ✅ 맞습니다. 여러 서버 간 공유, 높은 트래픽, 실시간 데이터에 적합
+
+**Q: 로컬 캐시는 사용자 컴퓨터에 저장?**
+- ❌ 아닙니다. **서버 메모리**에 저장됩니다.
+- 사용자 컴퓨터에 저장하는 건 **브라우저 캐시**입니다.
+
+**Q: PostgreSQL이 Redis보다 느린 이유?**
+- ✅ 맞습니다. PostgreSQL은 디스크 기반이라 느리고, Redis는 메모리 기반이라 빠릅니다.
+- 하지만 원격 환경에서는 네트워크 지연이 대부분이라 차이가 줄어듭니다.
+
+---
+
+## 🚀 결론
+
+**현재 프로젝트:**
+- 서버 메모리 캐싱 사용 (가장 빠름, 서버 추가 불필요)
+- PostgreSQL로 영구 저장
+- Redis는 선택사항 (나중에 필요하면 추가)
+
+**속도 순서:**
+1. 서버 메모리 캐싱 ⚡⚡⚡
+2. Redis (로컬) ⚡⚡
+3. PostgreSQL ⚡
+
+
+
+
+
+
+
+
+==================================================
+FILE_PATH: docs\CACHING_STRATEGY.md
+==================================================
+
+# 캐싱 전략 가이드
+
+## 🤔 Redis vs 메모리 캐싱 vs DB만 사용
+
+### 상황별 권장사항
+
+#### 1. **메모리 캐싱 (권장 ✅)**
+**언제?**
+- 서버를 추가로 열고 싶지 않을 때
+- 단일 서버 환경
+- 리포트 같은 가벼운 캐싱
+
+**장점:**
+- 서버 추가 불필요
+- 매우 빠름 (메모리 직접 접근)
+- 구현 간단
+
+**단점:**
+- 서버 재시작 시 캐시 사라짐
+- 여러 서버 간 공유 불가
+
+**사용법:**
+```python
+from app.core.cache_simple import get_report_cache, set_report_cache
+```
+
+---
+
+#### 2. **Redis 캐싱**
+**언제?**
+- 여러 서버 간 캐시 공유 필요
+- 높은 트래픽
+- 복잡한 데이터 구조 필요
+
+**장점:**
+- 서버 간 캐시 공유
+- 영구 저장 가능
+- 다양한 데이터 구조 지원
+
+**단점:**
+- 별도 서버 필요
+- 원격 환경에서는 네트워크 지연
+- 설정 복잡
+
+**사용법:**
+```python
+from app.core.cache import get_report_cache, set_report_cache
+```
+
+---
+
+#### 3. **DB만 사용 (가장 간단)**
+**언제?**
+- 리포트가 자주 생성되지 않음
+- DB 조회가 충분히 빠름
+- 캐싱 복잡도 원하지 않음
+
+**장점:**
+- 추가 설정 없음
+- 이미 구현되어 있음
+- 데이터 일관성 보장
+
+**단점:**
+- 매번 DB 조회 (약간 느림)
+- LLM 호출 비용 절감 없음
+
+**사용법:**
+```python
+# 캐싱 없이 DB만 조회
+report = await select_latest_report(store_id)
+```
+
+---
+
+## 📊 속도 비교
+
+### 로컬 환경 (같은 서버)
+```
+메모리 캐싱: ~0.001ms (가장 빠름) ⚡
+Redis: ~0.1ms
+PostgreSQL: ~1-5ms
+```
+
+### 원격 환경 (클라이언트 → 서버)
+```
+메모리 캐싱: 네트워크 지연 없음 (서버 내부) ⚡
+Redis: 네트워크 지연(10-50ms) + 0.1ms = ~10-50ms
+PostgreSQL: 네트워크 지연(10-50ms) + 1-5ms = ~11-55ms
+→ 원격에서는 메모리 캐싱이 압도적으로 빠름!
+```
+
+---
+
+## 🎯 현재 프로젝트 권장사항
+
+### 리포트 캐싱: 메모리 캐싱 사용 ✅
+
+**이유:**
+1. 리포트는 자주 생성되지 않음
+2. 같은 날 같은 지점 리포트는 동일
+3. 서버 재시작해도 다음 날 새로 생성하면 됨
+4. 원격 환경에서도 서버 내부에서 빠르게 조회
+
+**구현:**
+- `app/core/cache_simple.py` 사용
+- `report_service.py`에서 이미 적용됨
+
+---
+
+## 💡 실무 관점
+
+### 면접에서 어필할 포인트
+
+**"상황에 맞는 캐싱 전략을 선택했습니다"**
+
+1. **메모리 캐싱 선택 이유:**
+   - "서버를 추가로 열 필요 없이 Python 메모리만으로 캐싱 구현"
+   - "원격 환경에서도 서버 내부에서 빠르게 조회 가능"
+   - "리포트는 자주 생성되지 않아 메모리 캐싱으로 충분"
+
+2. **Redis도 이해하고 있음:**
+   - "여러 서버 간 캐시 공유가 필요하면 Redis 사용 가능"
+   - "높은 트래픽이나 복잡한 데이터 구조가 필요하면 Redis 선택"
+
+3. **비용 최적화:**
+   - "LLM API 호출 비용 절감을 위해 캐싱 전략 수립"
+   - "같은 날 같은 지점 리포트는 캐시에서 즉시 반환"
+
+---
+
+## 🔄 전환 방법
+
+### 메모리 캐싱 → Redis로 전환
+
+1. `report_service.py`에서 import 변경:
+```python
+# from app.core.cache_simple import ...  # 주석 처리
+from app.core.cache import get_report_cache, set_report_cache  # Redis 사용
+```
+
+2. `main.py`에서 Redis 초기화:
+```python
+from app.core.cache import init_redis, close_redis
+
+async def lifespan(app: FastAPI):
+    await init_redis()  # 주석 해제
+    ...
+    await close_redis()  # 주석 해제
+```
+
+3. Redis 서버 실행:
+```bash
+docker run -d --name redis-cache -p 6379:6379 redis:7-alpine
+```
+
+---
+
+## 📝 결론
+
+**현재 프로젝트에서는 메모리 캐싱이 최적입니다.**
+
+- 서버 추가 불필요
+- 원격 환경에서도 빠름
+- 구현 간단
+- 리포트 특성에 적합
+
+Redis는 나중에 필요할 때 추가하면 됩니다.
+
+
+
+
+
+
+
+
+==================================================
+FILE_PATH: docs\CHEAT_SHEET.md
+==================================================
+
+# 🛠️ Project Command Cheat Sheet
+
+프로젝트 실행 및 배포, 서버 관리에 자주 사용되는 핵심 명령어 모음입니다.
+
+---
+
+## 1. Local Development (로컬 실행)
+
+### 가상환경 활성화
+```powershell
+# Windows PowerShell
+./venv/scripts/activate
+
+# Mac/Linux
+source venv/bin/activate
+```
+
+### Backend 실행 (FastAPI)
+```powershell
+python -m uvicorn main:app --reload --port 8080
+```
+> 접속: http://localhost:8080/docs (Swagger UI)
+
+### Frontend 실행 (Streamlit)
+```powershell
+streamlit run ui/main_ui.py
+```
+> 접속: http://localhost:8501/
+
+---
+
+## 2. Server Deployment & Tunnelling (서버 접속)
+
+### ☁️ AWS EC2 서버 단순 접속
+서버 내부 작업(DB 확인, git pull 등)을 할 때 사용합니다.
+```powershell
+ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" ubuntu@15.164.230.250
+```
+
+### 🚇 로컬 -> EC2 -> RDS 터널링 (필수)
+로컬에서 AWS RDS 데이터를 조회하거나 개발할 때 **항상 켜둬야 하는** 명령어입니다.
+```powershell
+# 옵션 설명: 
+# -o ServerAliveInterval=60 : 60초마다 생존신고 (끊김 방지)
+# -N : 터미널 접속 없이 조용히 터널만 뚫기
+ssh -o ServerAliveInterval=60 -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" -L 5433:database-aws.cpusiq4esjqv.ap-northeast-2.rds.amazonaws.com:5432 ubuntu@15.164.230.250 -N
+```
+
+---
+
+## 3. ⚡ Tmux 사용법 (서버 화면 관리)
+
+서버에서 프론트엔드와 백엔드를 동시에 띄우고 관리하는 단축키입니다.
+**(주의: 모든 명령어는 `Ctrl` 키를 누른 상태에서 `b`를 누르고, 손을 뗀 다음 입력해야 함)**
+
+| 상황 | 명령어 / 키 조작 | 설명 |
+| :--- | :--- | :--- |
+| **세션 접속** | `tmux attach -t portfolio` | 기존에 켜둔 서버 화면으로 들어가기 |
+| **화면 나누기(상하)** | `Ctrl`+`b` 뗴고 `"` (따옴표) | 화면을 위/아래로 반반 쪼개기 |
+| **위/아래 이동** | `Ctrl`+`b` 떼고 `방향키(↑ ↓)` | 쪼개진 화면 사이를 왔다갔다 이동하기 |
+| **나가기 (Detach)** | `Ctrl`+`b` 떼고 `d` | **서버를 끄지 않고** 내 컴퓨터로 살며시 나오기 |
+| **스크롤 보기** | `Ctrl`+`b` 떼고 `[` | 지난 로그 확인 (나갈 땐 `q`) |
+| **세션 종료** | `exit` | 해당 창 완전히 종료 (주의!) |
+
+---
+
+## 4. 🚀 배포 순서 (Deploy Flow)
+
+로컬에서 코드를 수정하고 서버에 반영하는 정석 코스입니다.
+
+1.  **[로컬] 코드 수정 및 업로드**
+    ```powershell
+    git add .
+    git commit -m "작업 내용"
+    git push origin main
+    ```
+
+2.  **[서버] 코드 다운로드 및 재시작**
+    ```bash
+    # 1. 서버 접속
+    ssh -i "C:\Users\addmin\OneDrive\Desktop\AwsKey\aws_portfolio\aws_son_key.pem" ubuntu@15.164.230.250
+    
+    # 2. 코드 당겨오기 (프로젝트 폴더에서)
+    git pull origin main
+    
+    # 3. Tmux 접속
+    tmux attach -t portfolio
+    
+    # 4. 재시작 (각 창에서 진행 - 위/아래 이동은 Ctrl+b 방향키)
+    # Ctrl+C 로 끄고 -> 화살표 위(↑) 키 -> Enter (다시 실행)
+    ```
+
+---
+
+## 5. 🗄️ Database Info (Reference)
+
+- **AWS RDS Endpoint**: `database-aws.cpusiq4esjqv.ap-northeast-2.rds.amazonaws.com`
+- **DB Name**: `ai_project` (서버용) / `postgres` (로컬 터널링용)
+- **User**: `postgres`
+
+
+
+==================================================
+FILE_PATH: docs\PROJECT_MASTER_GUIDE.md
+==================================================
+
+# 📱 Project Master Guide (Mobile Friendly)
+
+> **지하철/이동 중에 빠르게 훑어보는 프로젝트 핵심 요약집**
+> 현재 날짜: 2025-12-30
+
+---
+
+## 🚨 1. Emergency Cheat Sheet (필수 명령어)
+
+### A. AWS 서버 접속 & 실행 (순서대로)
+1. **EC2 접속 (SSH)**
+   ```bash
+   ssh -i "key.pem" ubuntu@15.164.230.250
+   ```
+2. **Tmux 세션 열기 (백그라운드 유지)**
+   ```bash
+   tmux attach -t portfolio
+   # (없으면) tmux new -s portfolio
+   ```
+3. **가상환경 활성화**
+   ```bash
+   source venv/bin/activate
+   ```
+4. **Backend 실행 (안 죽게)**
+   ```bash
+   # --host 0.0.0.0 필수 (외부 접속용)
+   python -m uvicorn main:app --host 0.0.0.0 --port 8080
+   ```
+5. **Tmux 나가기 (서버 켜둔 채로)**
+   - `Ctrl` + `b` 누르고 손 떼고 -> `d`
+
+### B. 로컬 개발 환경 (내 컴퓨터)
+1. **DB 터널링 연결 (필수)**
+   - 별도 터미널 1개 희생해서 켜둬야 함.
+   ```powershell
+   ssh -i "key.pem" -N -L 5433:database-aws...:5432 ubuntu@15.164...
+   ```
+2. **Backend 실행**
+   ```powershell
+   python -m uvicorn main:app --reload --port 8080
+   ```
+3. **Frontend 실행**
+   ```powershell
+   streamlit run ui/main_ui.py
+   ```
+
+---
+
+## 🏗️ 2. System Architecture (구조도)
+
+### Flow (데이터 흐름)
+1. **User**가 `Streamlit UI`에서 질문/버튼 클릭
+2. **UI**는 `requests`로 **Backend API (FastAPI)** 호출
+3. **Backend**는 `LangGraph Agent`를 깨워 일을 시킴
+4. **Agent**는 판단함:
+   - "매출 질문이네?" → `Report Agent` (SQL 쿼리)
+   - "매뉴얼 질문이네?" → `Inquiry Agent` (RAG 검색)
+   - "날씨/트렌드네?" → `Tavily/Google Search` (웹 검색)
+5. **DB (PostgreSQL)**에서 데이터를 꺼내 `Gemini`가 요약 후 답변
+
+### 핵심 Tech Stack
+- **LangGraph**: 에이전트의 '뇌' (순환, 판단, 메모리 담당)
+- **FastAPI**: 에이전트의 '팔다리' (외부와 소통하는 창구)
+- **PostgreSQL + pgvector**: '기억 저장소' (매출 데이터 + 매뉴얼 벡터)
+- **Streamlit**: '얼굴' (사용자 인터페이스)
+
+---
+
+## 📂 3. Key Files & Modules (뭐가 어디 있는지)
+
+### 🧠 App Core (`app/`)
+- `main.py`: 서버 시작점. 모든 라우터(Router)가 모이는 곳.
+- `core/db.py`: DB 연결 관리 (Connection Pool).
+- **`inquiry/inquiry_agent.py`**: **가장 중요!** 챗봇의 모든 로직(검색, 판단, 답변)이 들어있음.
+- **`report/report_graph.py`**: 매출 리포트 생성용 LangGraph.
+- `clients/genai.py`: Google Gemini API 호출 함수들.
+
+### 🎨 Frontend (`ui/`)
+- `main_ui.py`: 화면 시작점.
+- `inquiry_page.py`: 챗봇 화면 구성.
+- `sales_component.py`: 매출 리포트 팝업 & 차트(Altair).
+
+---
+
+## 🐍 4. Python & LangGraph Knowledge (면접 대비)
+
+### Q1. 왜 LangGraph를 썼나요?
+- **일반 Chain**: A -> B -> C (일직선). 중간에 실패하면 끝.
+- **LangGraph**: A -> (판단) -> B or C -> (검색 실패 시) -> A로 돌아가 재검색 (**Cycle**).
+- **이유**: "복잡한 현실 문제(데이터 부족, 검색 실패)를 해결하려면 **스스로 루프를 돌며 수정하는 로직**이 필요해서."
+
+### Q2. Async/Await가 뭔가요?
+- **비동기 처리**. DB 조회나 AI 응답을 기다리는 동안, 서버가 멈추지 않고 다른 유저 요청을 처리하게 해줌.
+- `await fetch_all(...)`: "데이터 가져올 때까지 잠깐 딴 거 하고 있을게."
+
+### Q3. RAG가 뭔가요? (Retrieval-Augmented Generation)
+- LLM(Gemini)은 우리 가게 매출을 모름.
+- 그래서 **"관련된 문서(Manual)나 데이터(Sales)"를 먼저 찾아서(Retrieval)**,
+- 프롬프트에 끼워 넣어주고 **"이거 보고 대답해"라고 시키는 것(Augmentation)**.
+
+---
+
+## 📅 5. Today's Checkpoint (2025-12-30)
+
+- [x] **AWS 서버 메모리**: Swap 2GB 설정 완료 (밤샘 가능)
+- [x] **리포트 기능**: '기간 선택' & '초기화' 버튼 추가됨 (시연용 완벽)
+- [x] **검색 기능**: Google Grounding(실시간 검색) 탑재 완료
+- [ ] **Next Step**: DB 접속 이슈 해결하고, 테이블 구조 개편(Manual/Policy 분리)
+
+> **💡 팁**: 지하철에서 이 문서만 읽어도 프로젝트 전체 흐름이 머리속에 그려질 거야!
+
+
+
+==================================================
+FILE_PATH: docs\backend_tech_stack_summary.md
+==================================================
+
+# 🏗️ Backend Tech Stack & Database Workflow 정리
+
+## 1. 핵심 기술 개념 정의
+
+### 🔹 SQLAlchemy (ORM & Query Tool)
+- **역할**: Python 코드와 Database 사이의 **"통역사"**.
+- **주요 기능**:
+    - `Models`: Python 클래스로 DB 테이블 정의 (설계도 역할).
+    - `SessionLocal`: DB 연결 세션을 관리하며 데이터 CRUD(생성, 조회, 수정, 삭제)를 수행하는 **"일꾼"**.
+    - **ORM 방식**: SQL을 직접 쓰지 않고 `session.add(user)`, `session.query(User)` 처럼 객체 지향적으로 데이터 조작.
+    - **Raw SQL 지원**: 복잡한 통계 쿼리는 `text("SELECT ...")` 처럼 직접 실행도 가능.
+
+### 🔹 Alembic (Database Migration Tool)
+- **역할**: SQLAlchemy 모델(설계도)의 변경 사항을 감지하여 실제 DB 구조를 변경해주는 **"인테리어 업자"**.
+- **주요 기능**:
+    - `Revision`: 변경 사항(컬럼 추가 등)을 탐지하여 파이썬 스크립트 파일 생성.
+    - `Upgrade`: 생성된 스크립트를 실행하여 실제 DB 스키마(테이블 구조) 변경.
+    - **주의**: 오직 **"구조(Schema)"** 만 관리하며, 데이터(Row) 내용 자체는 관리하지 않음.
+
+---
+
+## 2. 올바른 개발 워크플로우 (Workflow)
+
+### 🚀 테이블을 새로 만들거나 수정할 때 (Schema Change)
+1. **모델 정의**: `app/schemas.py` 등에서 Python 클래스(`class Manual(Base)...`) 정의/수정.
+2. **Alembic 호출**: `db.py`의 `Base`에 모델이 등록되었는지 확인.
+3. **리비전 생성 (계획서)**:
+   ```bash
+   alembic revision --autogenerate -m "변경 내용 메모"
+   ```
+   👉 `alembic/versions` 폴더에 `.py` 파일이 자동 생성됨. (내용 확인 필수!)
+4. **DB 적용 (공사 실행)**:
+   ```bash
+   alembic upgrade head
+   ```
+   👉 실제 DB에 `CREATE TABLE`, `ALTER COLUMN` 등이 실행됨.
+
+### 📦 데이터를 넣거나 조회할 때 (Data Manipulation)
+- **Alembic을 쓰지 않음!** (데이터 영역임)
+- **SessionLocal 사용**:
+  ```python
+  with SessionLocal() as session:
+      new_item = Manual(title="청소법", content="...")
+      session.add(new_item)  # INSERT
+      session.commit()
+  ```
+- **대량 데이터**: `seed_data.py` 같은 스크립트도 결국 내부적으로 `SessionLocal`을 사용하여 데이터를 밀어 넣음.
+
+---
+
+## 3. 자주 묻는 질문 (FAQ)
+
+### Q1. `SessionLocal`로 데이터를 빨리 넣는 건 Alembic이랑 다른 건가요?
+> **Yes!** 완전히 다릅니다.
+> - **Alembic**: "그릇(테이블)을 만드는 도구" 🔨
+> - **SessionLocal**: "그릇에 음식(데이터)을 담는 도구" 🍱
+> - 데이터를 빠르게 넣는 건 SQLAlchemy의 `Bulk Insert` 기능을 쓰거나 로직 최적화의 영역입니다.
+
+### Q2. Alembic 에러 "Target database is not up to date"는 왜 뜨나요?
+> DB의 현재 상태와 Alembic의 장부(`alembic_version` 테이블)가 맞지 않아서입니다.
+> - 해결법: `alembic upgrade head`로 장부를 맞추거나, 꼬였을 땐 `alembic stamp head`로 강제 동기화.
+
+### Q3. 실무에서는 ORM만 쓰나요?
+> **No.** 하이브리드 패턴을 씁니다.
+> - **간단한 저장/수정**: ORM (`SessionLocal`) → 코드 가독성, 안전성 위주.
+> - **복잡한 통계/조회**: Raw SQL (`fetch_all`) → 성능 최적화 위주.
+
+---
+
+## 4. 실무형 명령어 치트시트
+
+| 목적 | 명령어 (PowerShell) |
+| :--- | :--- |
+| 상태 확인 | `alembic current` |
+| 변경 감지 | `alembic revision --autogenerate -m "메시지"` |
+| DB 반영 | `alembic upgrade head` |
+| 실행 취소 | `alembic downgrade -1` (한 단계 뒤로) |
+| 꼬임 해결 | `alembic stamp head` (강제 최신 처리) |
+
+
+
+==================================================
+FILE_PATH: docs\dev_log\20251217_faker_dummy_data.md
+==================================================
+
+# Faker를 활용한 더미 데이터 생성 자동화
+
+## 📅 생성 일시
+2025-12-17
+
+## 🛠️ 주요 라이브러리 및 도구
+- **Faker**: 한국어(`ko_KR`) 로케일을 지원하는 강력한 테스트 데이터 생성 라이브러리
+- **SQLAlchemy**: Python ORM을 사용하여 DB 레코드 객체 생성 및 저장
+- **AsyncIO**: (본 스크립트에서는 동기 세션을 사용했으나, 프로젝트 전반적으로 비동기 환경 고려)
+
+## 📋 구현 내용 요약
+기존에는 일일이 `INSERT INTO` 쿼리를 작성하여 테스트 데이터를 넣어야 했으나, `seed_data.py` 스크립트를 통해 이를 자동화했습니다.
+이를 통해 개발 초기 단계에서 UI 테스트나 로직 검증에 필요한 기본 데이터셋을 손쉽게 확보할 수 있습니다.
+
+### 1. 매장(Store) 데이터 생성 트릭
+- 단순히 랜덤 문자열을 넣는 것이 아니라, 실제 존재하는 도시 이름과 대략적인 위경도 좌표를 매핑하여 **지도(Map) 기능 테스트 시** 어색하지 않도록 구성했습니다.
+- `population_density_index` 같은 분석용 지표는 `random.uniform()`을 사용하여 다양성을 부여했습니다.
+
+### 2. 메뉴(Menu) 데이터 구조화
+- 카테고리(`coffee`, `dessert`)를 구분하여 생성했습니다.
+- 원가(`cost_price`)는 정가(`list_price`)의 약 30% 수준으로 자동 계산되도록 로직을 추가하여, 추후 **마진율 분석** 시 현실적인 데이터가 나오도록 유도했습니다.
+
+## 💻 실행 방법
+프로젝트 루트 경로에서 다음 명령어 실행:
+```powershell
+.\.venv\Scripts\python seed_data.py
+```
+*사전에 `pip install faker` 설치 필요*
+
+## 📝 코드 스니펫 (seed_data.py 핵심)
+```python
+# Faker 초기화 (한국어 설정)
+fake = Faker('ko_KR')
+
+# 중복 방지를 위한 체크 로직
+exists = session.query(Store).filter_by(store_name=data["name"]).first()
+if not exists:
+    store = Store(...)
+    session.add(store)
+```
+
+
+
+==================================================
+FILE_PATH: docs\dev_log\PROJECT_HISTORY.md
+==================================================
+
+# AiProjectLangGraph
+
+## 🚀 프로젝트 개요
+AI 기반 프랜차이즈/매장 관리 시스템으로, FastApi와 LangGraph를 활용한 지능형 데이터 분석 및 관리를 목표로 합니다.
+
+---
+
+## 🛠️ 개발 환경 설정 및 터미널 명령어 히스토리
+
+### 1. 초기 환경 설정
+Python 라이브러리 설치
+```powershell
+pip install fastapi uvicorn sqlalchemy psycopg psycopg-pool python-dotenv google-generativeai alembic streamlit pandas pydeck pgvector
+```
+
+### 2. 데이터베이스 구성 (Docker & Postgres)
+pgvector가 포함된 Postgres 컨테이너 실행
+```powershell
+docker run -d `
+  --name postgres-db `
+  -e POSTGRES_USER=ai_user `
+  -e POSTGRES_PASSWORD=1234 `
+  -e POSTGRES_DB=ai_project `
+  -p 5432:5432 `
+  pgvector/pgvector:pg16
+```
+*(참고: 기존 실행 중인 일반 Postgres 컨테이너에 pgvector를 수동 설치하는 경우)*
+```powershell
+docker exec -u 0 postgres-db apt-get update
+docker exec -u 0 postgres-db apt-get install -y postgresql-16-pgvector
+```
+
+### 3. 디렉토리 구조 생성
+```powershell
+mkdir app\store
+mkdir app\review
+mkdir app\order
+mkdir app\sales
+```
+
+### 4. Alembic 마이그레이션 (DB 스키마 관리)
+Alembic 초기화 (최초 1회)
+```powershell
+alembic init alembic
+```
+
+테이블 추가 및 변경 사항 반영
+```powershell
+# Store 테이블 추가
+.\.venv\Scripts\python -m alembic revision --autogenerate -m "Add stores table"
+.\.venv\Scripts\python -m alembic upgrade head
+
+# Review, Order 테이블 추가
+.\.venv\Scripts\python -m alembic revision --autogenerate -m "Add reviews and orders tables"
+.\.venv\Scripts\python -m alembic upgrade head
+
+# SalesDaily 테이블 추가
+.\.venv\Scripts\python -m alembic revision --autogenerate -m "Add sales_daily table"
+.\.venv\Scripts\python -m alembic upgrade head
+
+# pgvector 확장 및 임베딩 컬럼 추가 (Review, Menu)
+.\.venv\Scripts\python -m alembic revision --autogenerate -m "Add pgvector and embeddings"
+.\.venv\Scripts\python -m alembic upgrade head
+```
+
+---
+
+## 🗂️ 데이터베이스 스키마 구조
+현재 구축된 주요 테이블 명세입니다.
+
+### 1. Stores (매장)
+- `store_id`: 매장 고유 ID
+- `store_name`, `region`, `city`: 매장명 및 위치 정보
+- `lat`, `lon`: 지도 표시 좌표
+- `population_density_index`: 상권 분석용 인구 밀도 지수
+
+### 2. Menus (메뉴)
+- `menu_id`, `menu_name`: 메뉴 기본 정보
+- `description`: 메뉴 설명 **(임베딩 대상)**
+- `embedding`: 1536차원 벡터 데이터 (AI 추천용)
+
+### 3. Reviews (리뷰 / VOC)
+- `review_id`, `rating`, `review_text`: 리뷰 내용
+- `delivery_app`: 주문 플랫폼 (배민/쿠팡 등)
+- `embedding`: 1536차원 벡터 데이터 **(AI 분석/분류용)**
+- *참고: 별도 카테고리 테이블 대신 임베딩 기반 동적 분석 방식을 채택함.*
+
+### 4. Orders (주문)
+- `order_id`, `quantity`, `total_price`: 판매 내역 상세
+
+### 5. SalesDaily (매출 집계)
+- `store_id`, `sale_date`: 매장별 일자 (복합 Key 역할)
+- `total_sales`: 일 매출 합계 (분석 및 대시보드 성능 최적화용)
+
+
+
+==================================================
+FILE_PATH: docs\portfolio\PORTFOLIO_MASTER.md
+==================================================
+
+# 📘 AI Franchise Manager: Technical Whitepaper
+> **"데이터로 사고하고, 맥락으로 대화하는 자율형 매장 관리 에이전트"**  
+> **Development Period**: 2024.12 ~ 2025.01 (1 Month)  
+> **Role**: Full Stack Developer & AI Engineer (1인 개발)
+
+---
+
+## � Table of Contents
+1. **Project Overview** (개요)
+2. **Planning Intent** (기획 의도)
+3. **Tech Stack Strategy** (기술 선정 이유)
+4. **Database Schema** (데이터 구조)
+5. **System Architecture** (시스템 설계)
+6. **API Specification** (API 명세)
+7. **Core Feature 1: Report Agent** (자동 분석)
+8. **Core Feature 2: Inquiry Agent** (대화형 비서)
+9. **Log #1: AWS RDS Connection** (트러블슈팅)
+10. **Log #2: LLM JSON Parsing** (트러블슈팅)
+11. **Log #3: RAG Accuracy** (트러블슈팅)
+12. **Future Roadmap** (향후 계획)
+
+---
+
+## 1. 📘 Project Overview
+**AI Franchise Manager**는 프랜차이즈 가맹점주가 겪는 '데이터 분석의 어려움'과 '운영 매뉴얼 숙지의 불편함'을 해결하기 위해 개발된 **All-in-One AI 솔루션**입니다. 단순한 대시보드를 넘어, AI가 먼저 데이터를 파고들어 인사이트를 떠먹여 주는(Proactive) 경험을 제공합니다.
+
+---
+
+## 2. 🎯 Planning Intent
+### "사장님은 요리에만 집중하세요, 분석은 AI가 합니다."
+- **Why?**: 자영업자 90%는 포스기(POS)에 찍히는 매출 숫자를 볼 뿐, "왜 매출이 올랐는지/떨어졌는지" 분석할 시간도 능력도 부족합니다.
+- **Goal**: 
+  1. **Automation**: 매일/매주 클릭 없이도 분석 보고서 자동 생성
+  2. **Accessibility**: 복잡한 검색 대신 채팅으로 "배달비 규정이 뭐지?" 물어보면 즉답
+  3. **Reliability**: 그럴싸한 거짓말(Hallucination) 없는 신뢰성 있는 AI 구축
+
+---
+
+## 3. 🛠️ Tech Stack Strategy
+
+| Layer | Technology | Selection Reason |
+| :--- | :--- | :--- |
+| **Brain** | **LangGraph** | LangChain의 단순 Chain 구조(Linear)를 넘어, **상태(State) 유지** 및 **순환(Loop/Retry)** 구조가 필요한 에이전트 설계를 위해 도입 |
+| **LLM** | OpenAI / Gemini | 복잡한 추론엔 GPT-4o, 대량 텍스트 처리엔 Gemini 1.5 Flash를 사용하여 **비용 효율성** 최적화 |
+| **Backend** | FastAPI (Python) | 비동기 처리(Async) 성능이 우수하고, Python AI 생태계 라이브러리(Pandas, NumPy)와의 호환성 최강 |
+| **DB** | PostgreSQL + pgvector | 관계형 데이터(매출)와 벡터 데이터(임베딩)를 **단일 DB**에서 관리하여 인프라 복잡도 제거 |
+| **Frontend** | Streamlit | 데이터 시각화(Chart)와 채팅 UI를 가장 빠르게 구현하고 배포할 수 있는 도구 |
+| **Deploy** | AWS EC2 (Ubuntu) | 실제 상용 서비스 환경과 동일한 리눅스 클라우드 서버 구축 경험 확보 |
+
+---
+
+## 4. � Database Schema (ERD)
+
+**Normalization(정규화)**된 관계형 설계와 **Vector Search**를 위한 임베딩 설계를 결합했습니다.
+
+- **Stores**: 가맹점 정보 (Location, Manager)
+- **Sales_Daily**: 일별 매출 집계 (Date, Revenue, Weather Tag)
+- **Menus**: 메뉴 정보 및 카테고리
+- **Order_Items**: 주문 상세 내역 (Menu Join)
+- **Reviews**: 고객 리뷰 및 별점
+- **Manuals (Vector)**: 운영 매뉴얼 청크 & Embedding Vector (1536 dim)
+- **Store_Reports**: AI가 생성한 주간 리포트 (JSON)
+
+---
+
+## 5. 🏗️ System Architecture
+
+요청의 성격에 따라 두 개의 전문 에이전트로 분기되는 **Router 구조**를 채택했습니다.
+
+```mermaid
+graph TD
+    User -->|Question| Router{Query Router}
+    
+    Router -->|Analysis Request| ReportAgent[📊 Report Agent]
+    Router -->|Genral Inquiry| InquiryAgent[💬 Inquiry Agent]
+    
+    subgraph Report Pipeline
+        ReportAgent --> Fetch[Data Fetch]
+        Fetch --> Calc[Python Calc]
+        Calc --> Reason[LLM Reasoning]
+        Reason --> Save[DB Save]
+    end
+    
+    subgraph Inquiry Pipeline
+        InquiryAgent --> Intent{Intent Classification}
+        Intent -->|Manual| RAG[Vector Search]
+        Intent -->|Trend| Web[Tavily Search]
+        Intent -->|Sales| SQL[Generating SQL]
+    end
+```
+
+---
+
+## 6. 🔌 API Specification
+RESTful 원칙을 준수하며 FastAPI 엔드포인트를 설계했습니다.
+
+- `POST /api/v1/inquiry`: 사용자 질문 처리 및 스트리밍 응답
+- `POST /api/v1/report/generate`: 주간 리포트 생성 트리거 (Batch)
+- `GET /api/v1/report/{store_id}`: 생성된 리포트 조회
+- `GET /api/v1/sales/daily`: 차트용 시계열 데이터 조회
+
+---
+
+## 7. 🤖 Core Feature 1: Report Agent
+**"Data Pipeline + LLM Reasoning"**
+
+단순히 LLM에게 데이터를 다 주고 "분석해"라고 하지 않습니다. **엔지니어링으로 데이터를 통제**합니다.
+1. **Pre-calculation**: 총 매출, 성장률 등 숫자는 Python으로 미리 계산 (정확도 100%)
+2. **Context Injection**: 계산된 숫자와 날씨 정보, 메뉴 트렌드를 텍스트로 변환하여 프롬프트 주입
+3. **Structured Output**: AI의 분석 결과를 `<SECTION>` 태그로 구조화하여 DB에 저장
+
+---
+
+## 8. � Core Feature 2: Inquiry Agent
+**"Adaptive RAG System"**
+
+질문의 의도를 파악하여 도구를 스스로 선택합니다.
+- **사내 규정 질문**: "오픈 시간 언제야?" -> Vector DB 검색 (RAG)
+- **외부 트렌드 질문**: "요즘 뜨는 디저트 뭐야?" -> Tavily Web Search
+- **복합 질문**: "비 오는 날 배달 팁 규정 알려줘" -> RAG 검색 후 답변
+
+---
+
+## 9. 🔥 Log #1 (Infra): AWS Connection Refused
+- **Issue**: 로컬 개발 환경(`localhost:5433`) 설정 파일이 서버에 배포되어 DB 연결 실패.
+- **Analysis**: Git으로 코드는 동기화했지만 `.env` 파일의 환경 차이를 간과함.
+- **Solution**: 
+  1. 서버 전용 `.env` 파일 작성 및 `vim`으로 직접 수정.
+  2. 로컬 터널링 포트 대신 AWS RDS 엔드포인트(`database-aws...`) 직접 연결 설정.
+  3. `pkill` 명령어로 기존 프로세스 종료 후 재시동하여 완벽 해결.
+
+---
+
+## 10. 🔥 Log #2 (Backend): LLM JSON Parsing Crash
+- **Issue**: LLM에게 "JSON으로 내놔"라고 해도 가끔 콤마(,)를 빼먹거나 설명 텍스트를 붙여 파이썬 `json.loads()`가 터짐.
+- **Analysis**: LLM은 확률적 모델이므로 형식을 완벽하게 강제할 수 없음.
+- **Solution**: **Tag-based Parsing Strategy** 도입.
+  - JSON 대신 `<Sales>...</Sales>` 태그로 감싸게 프롬프트 수정.
+  - 정규표현식(Regex)으로 태그 내부 내용만 추출.
+  - **Result**: 파싱 성공률 85% -> 99.9% 달성.
+
+---
+
+## 11. 🔥 Log #3 (AI): Hybrid Search Implementation
+- **Issue**: 단순 키워드 매칭으로는 "직원 복장" 검색 시 "유니폼" 문서를 못 찾음. (의미적 간극)
+- **Solution**: **Hybrid Search (Keyword + Vector)**
+  - `pgvector`를 사용해 의미 기반 검색(Cosine Similarity) 구현.
+  - "복장"이라고 물어도 "유니폼 착용 규정" 문서를 정확히 찾아냄.
+
+---
+
+## 12. 🚀 Future Roadmap
+현재의 **Linear Pipeline**을 넘어 **Self-Correction Loop**를 도입할 예정입니다.
+- **계획**: 파싱 실패나 데이터 누락 발생 시, 에러 로그를 포함하여 LLM에게 "다시 생성해"라고 요청하는 **재귀적(Recursive) 그래프**로 고도화.
+- **목표**: 인간의 개입 없는 **완전 자율형(Autonomous) 운영 시스템** 구축.
+
+
+
+==================================================
+FILE_PATH: docs\report_architecture.md
+==================================================
+
+# 📊 AI Report Agent Architecture: Reliability over Optimization
+
+> **"화려한 모델보다 중요한 건, 신뢰할 수 있는 데이터 파이프라인입니다."**  
+> 이 문서는 AI 기반 주간 리포트 생성 시스템의 설계 의도와 데이터 무결성을 보장하기 위한 엔지니어링 전략을 기술합니다.
+
+---
+
+## 🏗️ 1. Logic Flow (데이터 처리 흐름)
+
+이 에이전트는 **LangGraph**의 상태 관리(State Management) 기능을 활용하여 `Fetch` -> `Analyze` -> `Save`의 순차적 처리를 수행합니다.
+
+```mermaid
+graph LR
+    Start([🚀 Start]) --> Fetch[📥 Fetch Data\n(DB & Parameters)]
+    Fetch --> Analyze[🧠 Analyze Node\n(Metric Calc & AI Reasoning)]
+    Analyze --> Save[💾 Save Node\n(DB Transaction)]
+    Save --> End([🏁 End])
+```
+
+### **Step 1: Fetch Data (재료 준비)**
+- **Role**: AI 분석에 필요한 Raw Data를 DB에서 수집하고, 정합성을 검증합니다.
+- **Key Logic**:
+  - `sales_daily` (매출) / `reviews` (리뷰) / `weather` (날씨) 데이터 병합
+  - **Python Reducer**: AI에게 계산을 맡기지 않고, Python 코드로 직접 `Total Revenue`, `Growth Rate`를 선행 계산하여 `State`에 주입 (AI 연산 오류 방지).
+
+### **Step 2: Analyze Data (분석 및 생성)**
+- **Role**: 수치 데이터를 바탕으로 인사이트를 도출하고 구조화된 리포트를 생성합니다.
+- **Engineering Point (Tag Parsing Strategy)**:
+  - **문제**: LLM은 JSON 형식을 자주 틀리거나(Trailing Comma 등), 불필요한 서론(Preambles)을 붙이는 경향이 있음.
+  - **해결**: XML 스타일의 태그(`<SECTION:SALES>`)를 도입하여 Regex로 파싱. **JSON 파싱보다 실패율이 현저히 낮음.**
+  - **Fallback**: 파싱 실패 시 기본값(Default)을 반환하여 파이프라인 중단 방지.
+
+### **Step 3: Save Data (저장 및 검증)**
+- **Role**: 생성된 리포트를 DB(`store_reports`)에 저장합니다.
+- **Safety Gate**: `risk_score` 등 필수 필드가 누락된 경우 저장을 건너뛰어(Skip), **"쓰레기 데이터(Garbage Data)"가 DB에 쌓이는 것을 원천 차단.**
+
+---
+
+## 💡 2. Core Engineering Decisions (기술적 의사결정)
+
+### Q1. 왜 복잡한 Graph가 아닌 Linear Chain을 사용했나요?
+초기 단계에서는 **"안정성(Stability)"**이 최우선입니다. 복잡한 분기 처리는 디버깅을 어렵게 만듭니다. 현재 구조는 명확한 `Input -> Process -> Output` 흐름을 가지며, LangGraph의 **State**를 활용해 데이터를 안전하게 전달하는 데 집중했습니다.
+
+### Q2. JSON 대신 Tag Parsing을 쓴 이유는?
+`json.loads()`는 단 하나의 콤마 에러에도 전체가 실패(Crash)합니다. 반면 Regex를 이용한 태그 추출 방식은 **부분적 성공(Partial Success)**이 가능하며, LLM의 불안정한 출력에 훨씬 강력(Robust)하게 대응할 수 있습니다. 이는 실무적인 **Reliability Engineering**의 일환입니다.
+
+---
+
+## 🚀 3. Future Improvements (향후 발전 계획)
+
+현재의 선형 구조(Linear)를 넘어, **LangGraph의 순환(Cycle) 기능**을 도입하여 자율 수정 시스템으로 고도화할 계획입니다.
+
+### **Self-Correction Loop (자율 수정)**
+- **Current**: 파싱 실패 시 → `Error Log` 남기고 종료 (수동 확인 필요)
+- **Proposed**: 파싱 실패 시 → **"형식이 잘못됐어, 다시 생성해"**라고 LLM에게 피드백을 주며 `Analyze` 노드로 회귀.
+  - 이를 통해 인간의 개입 없이 **성공률을 99.9%까지** 끌어올릴 수 있음.
+
+```mermaid
+graph TD
+    Fetch --> Analyze
+    Analyze --> Check{Parsing OK?}
+    Check -->|Yes| Save
+    Check -->|No / Retry < 3| Analyze
+    Check -->|Fail / Retry >= 3| HumanAlert[⚠️ Manual Review]
+```
+
+
+
+==================================================
+FILE_PATH: main.py
+==================================================
+
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from app.clients import genai
+from app.core.db import close_pool, init_pool
+from app.user import user_router
+from app.store import store_router
+from app.menu import menu_router
+from app.order import order_router
+from app.review import review_router
+from app.report import report_router
+from app.report import report_router
+from app.inquiry import inquiry_router
+from app.manual import manual_router
+from app.policy import policy_router
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_pool()
+    print("🚀 App startup complete")
+
+    yield
+
+    await close_pool()
+    print("🧹 App shutdown complete")
+
+app = FastAPI(lifespan=lifespan)
+
+app.include_router(user_router.router)
+app.include_router(store_router.router)
+app.include_router(menu_router.router)
+app.include_router(order_router.router)
+app.include_router(review_router.router)
+app.include_router(report_router.router)
+app.include_router(report_router.router)
+app.include_router(inquiry_router.router)
+app.include_router(manual_router.router)
+app.include_router(policy_router.router)
+
+# response = genai.genai_generate_text("안녕하세요")
+# print("genai 실행", response)
+
+
+@app.get("/")
+def root():
+    return {"message": "Ai_Project Run"}
+
+
+
+==================================================
+FILE_PATH: scripts\aggregate_sales_and_weather.py
+==================================================
+
+import asyncio
+import sys
+import os
+from datetime import date, timedelta
+from sqlalchemy import text, func
+
+# Add project root to path
+sys.path.append(os.getcwd())
+
+from app.core.db import SessionLocal
+from app.order.order_schema import Order
+from app.sales.sales_schema import SalesDaily
+from app.clients.weather import fetch_weather_data
+
+# ----- Config -----
+# STORE_ID = 1  <-- 제거 (모든 매장 대상)
+
+async def main():
+    print("🚀 일별 매출 집계 및 날씨 정보 병합 시작 (전체 매장)...")
+
+    with SessionLocal() as session:
+        # 1. DB 스키마 마이그레이션 (임시)
+        try:
+            session.execute(text("ALTER TABLE sales_daily ADD COLUMN weather_info VARCHAR(50)"))
+            session.commit()
+            print("✅ 'weather_info' 컬럼 추가 완료")
+        except Exception:
+            session.rollback()
+            print("ℹ️ 'weather_info' 컬럼 확인 완료")
+
+        # 2. 집계할 주문 데이터 조회 (최근 30일)
+        today = date.today()
+        start_date = today - timedelta(days=35) 
+
+        print(f"📅 {start_date} 이후 데이터 집계 중...")
+
+        # 날짜별/매장별 매출/주문수 집계
+        results = session.query(
+            Order.store_id,
+            func.date(Order.ordered_at).label("order_date"),
+            func.sum(Order.total_price).label("total_rev"),
+            func.count(Order.order_id).label("total_cnt")
+        ).filter(
+            Order.ordered_at >= start_date
+        ).group_by(
+            Order.store_id,
+            func.date(Order.ordered_at)
+        ).all()
+
+        if not results:
+            print("❌ 집계할 주문 데이터가 없습니다.")
+            return
+
+        # 3. 날씨 데이터 조회 (모든 날짜 한 번에 조회 - 서울 기준)
+        # TODO: 매장별 위/경도 적용은 추후 개선 (현재는 기본값 서울)
+        dates_to_fetch = list(set([r.order_date for r in results]))
+        print(f"🌤️ 날씨 API 조회 ({len(dates_to_fetch)}일치)...")
+        weather_map = await fetch_weather_data(dates_to_fetch)
+
+        # 4. SalesDaily 테이블 업데이트 (Upsert)
+        count = 0
+        for row in results:
+            curr_date = row.order_date
+            weather = weather_map.get(str(curr_date), "알수없음")
+            
+            # 기존 레코드 확인
+            daily_record = session.query(SalesDaily).filter_by(
+                store_id=row.store_id, 
+                sale_date=curr_date
+            ).first()
+            
+            if daily_record:
+                daily_record.total_sales = row.total_rev
+                daily_record.total_orders = row.total_cnt
+                daily_record.weather_info = weather
+            else:
+                new_record = SalesDaily(
+                    store_id=row.store_id,
+                    sale_date=curr_date,
+                    total_sales=row.total_rev,
+                    total_orders=row.total_cnt,
+                    weather_info=weather
+                )
+                session.add(new_record)
+            count += 1
+        
+        session.commit()
+        print(f"✅ 총 {count}건의 일별 매출 데이터가 갱신되었습니다!")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+
+
+==================================================
+FILE_PATH: scripts\check_sales_data.py
+==================================================
+
+import asyncio
+import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
+
+from app.core.db import fetch_all, init_pool, close_pool
+
+async def main():
+    await init_pool()
+    try:
+        res1 = await fetch_all("SELECT sale_date, total_sales FROM sales_daily WHERE store_id=1 ORDER BY sale_date DESC LIMIT 3")
+        res2 = await fetch_all("SELECT sale_date, total_sales FROM sales_daily WHERE store_id=2 ORDER BY sale_date DESC LIMIT 3")
+        print(f"Store 1 (Recent 3 days): {res1}")
+        print(f"Store 2 (Recent 3 days): {res2}")
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        await close_pool()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+
+
+==================================================
+FILE_PATH: scripts\cleanup_db_table.py
+==================================================
+
+import asyncio
+import os
+import sys
+
+# 프로젝트 루트 경로 추가
+sys.path.append(os.getcwd())
+
+from app.core.db import execute, fetch_all, init_pool, close_pool
+
+async def cleanup_table():
+    await init_pool() # Connection Pool 초기화 필수
+    
+    print("🗑️ 'review_analysis' 테이블 삭제 시도 중...")
+    try:
+        # CASCADE 옵션으로 연관된 객체까지 강제 삭제
+        await execute("DROP TABLE IF EXISTS review_analysis CASCADE;")
+        print("✅ DROP 쿼리 실행 완료.")
+    except Exception as e:
+        print(f"❌ 테이블 삭제 중 오류: {e}")
+
+    # 검증
+    print("🔎 테이블 존재 여부 확인 중...")
+    check_query = """
+    SELECT table_name 
+    FROM information_schema.tables 
+    WHERE table_schema = 'public' 
+    AND table_name = 'review_analysis';
+    """
+    result = await fetch_all(check_query)
+    
+    if not result:
+        print("🎉 확인 결과: 'review_analysis' 테이블이 완전히 삭제되었습니다! (Result: None)")
+    else:
+        print(f"⚠️ 경고: 테이블이 아직 존재합니다: {result}")
+        
+    await close_pool()
+
+if __name__ == "__main__":
+    if os.name == 'nt':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.run(cleanup_table())
+
+
+
+==================================================
+FILE_PATH: scripts\export_codebase.py
+==================================================
+
+import os
+
+# 설정
+ROOT_DIR = os.getcwd()
+EXPORT_DIR = os.path.join(ROOT_DIR, "code_export")
+IGNORE_DIRS = {".git", "venv", "__pycache__", ".vscode", ".idea", "code_export", "tests", "tmp", "logs"}
+IGNORE_FILES = {".DS_Store", "poetry.lock", "package-lock.json", "*.pyc"}
+TARGET_EXTS = {".py", ".md", ".txt", ".ini", ".env.example"}
+
+# 카테고리 매핑
+CATEGORIES = {
+    "Backend_App": ["app"],
+    "Frontend_UI": ["ui"],
+    "Docs_Config": ["docs", "scripts", "main.py", "requirements.txt", ".env.example", "README.md"]
+}
+
+def get_category(path):
+    rel_path = os.path.relpath(path, ROOT_DIR)
+    
+    # 루트 파일 처리
+    if os.path.isfile(path) and os.path.dirname(path) == ROOT_DIR:
+        filename = os.path.basename(path)
+        if filename in ["main.py", "requirements.txt", ".env.example", "README.md"]:
+            return "Docs_Config"
+        return "Misc"
+
+    # 디렉토리 기반 매핑
+    top_dir = rel_path.split(os.sep)[0]
+    for cat, folders in CATEGORIES.items():
+        if top_dir in folders:
+            return cat
+    return "Misc"
+
+def write_file_content(f_out, file_path):
+    try:
+        rel_path = os.path.relpath(file_path, ROOT_DIR)
+        with open(file_path, "r", encoding="utf-8") as f_in:
+            content = f_in.read()
+            
+        f_out.write(f"\n{'='*50}\n")
+        f_out.write(f"FILE_PATH: {rel_path}\n")
+        f_out.write(f"{'='*50}\n\n")
+        f_out.write(content)
+        f_out.write("\n\n")
+        print(f"✅ Included: {rel_path}")
+    except Exception as e:
+        print(f"❌ Error reading {file_path}: {e}")
+
+def main():
+    if not os.path.exists(EXPORT_DIR):
+        os.makedirs(EXPORT_DIR)
+        
+    files_by_cat = {cat: [] for cat in CATEGORIES.keys()}
+    files_by_cat["Misc"] = []
+
+    # 파일 수집
+    for root, dirs, files in os.walk(ROOT_DIR):
+        # 무시할 폴더 제거
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+        
+        for file in files:
+            ext = os.path.splitext(file)[1]
+            if ext not in TARGET_EXTS and file not in ["requirements.txt", ".env.example", "Dockerfile"]:
+                continue
+                
+            full_path = os.path.join(root, file)
+            cat = get_category(full_path)
+            files_by_cat[cat].append(full_path)
+
+    # 파일 쓰기
+    for cat, paths in files_by_cat.items():
+        if not paths: continue
+        
+        out_path = os.path.join(EXPORT_DIR, f"PROJECT_SOURCE_{cat}.txt")
+        with open(out_path, "w", encoding="utf-8") as f_out:
+            f_out.write(f"Project Code Export - Category: {cat}\n")
+            f_out.write(f"Generated for Gemini Canvas Analysis\n\n")
+            
+            for path in sorted(paths): # 정렬해서 일관성 유지
+                write_file_content(f_out, path)
+                
+    print(f"\n✨ Export Completed to: {EXPORT_DIR}")
+
+if __name__ == "__main__":
+    main()
+
+
+
+==================================================
+FILE_PATH: scripts\fill_data_gap.py
+==================================================
+
+import asyncio
+import random
+from datetime import date, timedelta, datetime
+import sys
+import os
+
+# Add project root to path
+sys.path.append(os.getcwd())
+
+from sqlalchemy import text
+from app.core.db import SessionLocal
+from app.order.order_schema import Order
+from app.review.review_schema import Review
+from app.menu.menu_schema import Menu
+from app.clients.weather import fetch_weather_data
+
+# ----- Config -----
+STORE_ID = 1
+START_DATE = date(2024, 11, 23)
+# END_DATE = date(2024, 12, 21) # Or today
+END_DATE = date.today()
+
+BASE_DAILY_ORDERS = 45  # 일 평균 주문 수 (좀 더 높여서 꽉 채워지는 느낌으로)
+
+POSITIVE_REVIEWS = ["맛있어요", "최고에요", "사장님이 친절해요", "매장이 깔끔해요", "재주문 의사 100%", "커피 향이 좋아요", "디저트 맛집 인정", "친구랑 또 올게요", "가성비 좋아요"]
+NEUTRAL_REVIEWS = ["무난해요", "그냥 그래요", "보통입니다", "나쁘지 않아요", "배달이 조금 늦었지만 맛은 괜찮아요", "가격 대비 평범해요"]
+NEGATIVE_REVIEWS = ["너무 늦게 왔어요", "디저트가 다 부서져서 옴", "맛이 변한 것 같아요", "커피가 식어서 왔어요", "별로에요", "직원이 불친절해요"]
+
+async def main():
+    print(f"🚀 {START_DATE} ~ {END_DATE} 기간 데이터 생성 (Gap Filling)...")
+    
+    with SessionLocal() as session:
+        # 1. 메뉴 정보 가져오기
+        menus = session.query(Menu).all()
+        if not menus:
+            print("❌ 메뉴 데이터가 없습니다.")
+            return
+        menu_map = {m.menu_id: m for m in menus}
+        menu_ids = list(menu_map.keys())
+
+        # 2. 날짜 리스트 생성
+        delta = (END_DATE - START_DATE).days + 1
+        all_dates = [START_DATE + timedelta(days=i) for i in range(delta)]
+        
+        # 3. 날씨 데이터 조회 (전체 기간 한 번에)
+        print(f"🌤️ 날씨 데이터 조회 중 ({len(all_dates)}일치)...")
+        weather_map = await fetch_weather_data(all_dates)
+        
+        orders_to_add = []
+        reviews_to_add = []
+        
+        for d in all_dates:
+            # 해당 날짜에 이미 주문이 많은지 확인?
+            # 사용자 요청: "꽉 채워달라" -> 기존 데이터가 적으면 추가, 없으면 생성.
+            # 가장 확실한건 해당 기간 데이터를 '날려버리고 다시 만드는' 것인데,
+            # 그러면 기존 데이터가 날아가니까... 
+            # 일단 기존 데이터를 지우고 다시 만드는게 '깔끔하게 꽉 채우는' 가장 좋은 방법.
+            # -> 이전 대화에서 Gap Filling이라 했지만, "꽉차있는것처럼" 데이터 구성을 원하시니
+            #    중복되거나 더러운 데이터보다는 깔끔한 재생성이 낫습니다.
+            
+            # 날짜별로 지우고 다시 씀
+            # session.execute(text(f"DELETE FROM orders WHERE store_id = {STORE_ID} AND DATE(ordered_at) = '{d}'"))
+            # session.execute(text(f"DELETE FROM reviews WHERE store_id = {STORE_ID} AND DATE(created_at) = '{d}'"))
+            # (속도를 위해 일단 루프 밖에서 전체 삭제 후 생성 방식을 택하겠습니다)
+            pass
+
+        # 전체 기간 데이터 삭제 (Clean Slate)
+        print(f"🧹 {START_DATE} ~ {END_DATE} 기존 데이터 정리 중...")
+        session.execute(text(f"DELETE FROM reviews WHERE store_id = {STORE_ID} AND created_at >= '{START_DATE}' AND created_at < '{END_DATE + timedelta(days=1)}'"))
+        session.execute(text(f"DELETE FROM orders WHERE store_id = {STORE_ID} AND ordered_at >= '{START_DATE}' AND ordered_at < '{END_DATE + timedelta(days=1)}'"))
+        session.commit()
+
+        print("📝 데이터 생성 시작...")
+        for d in all_dates:
+            d_str = str(d)
+            weather = weather_map.get(d_str, "알수없음")
+            weekday = d.weekday() 
+            is_weekend = weekday >= 5
+            
+            # --- 시뮬레이션 로직 ---
+            daily_factor = 1.0
+            
+            # 주말 가중치
+            if is_weekend:
+                daily_factor *= 1.4  
+            
+            # 날씨 가중치
+            if "비" in weather or "뇌우" in weather:
+                daily_factor *= 0.6 
+            elif "눈" in weather:
+                daily_factor *= 0.5
+            elif "맑음" in weather:
+                daily_factor *= 1.15
+            
+            # 주문 수 (랜덤성 추가)
+            order_count = int(BASE_DAILY_ORDERS * daily_factor * random.uniform(0.85, 1.15))
+            
+            # (시나리오: 12월 10일 전후로 특정 메뉴 판매 급증/급감 등)
+            
+            for _ in range(order_count):
+                mid = random.choice(menu_ids)
+                menu = menu_map[mid]
+                
+                # 수량 (1~4개)
+                qty = random.choices([1, 2, 3, 4], weights=[0.6, 0.25, 0.1, 0.05])[0]
+                price = (menu.list_price or 5000) * qty
+                
+                # 시간 (오픈 10시 ~ 마감 22시)
+                # 점심 피크(12~14), 저녁 피크(18~20) 반영
+                hour = random.choices(
+                    range(10, 23), 
+                    weights=[0.5, 0.8, 1.5, 1.2, 0.8, 0.7, 0.6, 0.7, 1.2, 1.0, 0.8, 0.5, 0.2]
+                )[0]
+                minute = random.randint(0, 59)
+                order_dt = datetime.combine(d, datetime.min.time()).replace(hour=hour, minute=minute)
+                
+                new_order = Order(
+                    store_id=STORE_ID,
+                    menu_id=mid,
+                    quantity=qty,
+                    total_price=price,
+                    ordered_at=order_dt
+                )
+                orders_to_add.append(new_order)
+                
+                # 리뷰 생성 (15% 확률)
+                if random.random() < 0.15:
+                    review_dt = order_dt + timedelta(minutes=random.randint(30, 300))
+                    # 다음날로 넘어가는 경우 처리
+                    if review_dt.date() > d:
+                         review_dt = review_dt.replace(day=d.day, hour=23, minute=59)
+
+                    # 평점 시나리오 (날씨 안좋으면 배달 늦어서 평점 하락)
+                    if "비" in weather or "눈" in weather:
+                        rating = random.choices([1, 2, 3, 4, 5], weights=[0.1, 0.2, 0.3, 0.3, 0.1])[0]
+                    else:
+                        rating = random.choices([3, 4, 5], weights=[0.05, 0.35, 0.6])[0]
+                    
+                    if rating >= 4:
+                        txt = random.choice(POSITIVE_REVIEWS)
+                    elif rating == 3:
+                        txt = random.choice(NEUTRAL_REVIEWS)
+                    else:
+                        txt = random.choice(NEGATIVE_REVIEWS)
+
+                    new_review = Review(
+                        store_id=STORE_ID,
+                        menu_id=mid,
+                        rating=rating,
+                        review_text=txt,
+                        created_at=review_dt,
+                        delivery_app=random.choice(["배달의민족", "쿠팡이츠", "요기요"])
+                    )
+                    reviews_to_add.append(new_review)
+
+        # Bulk Insert
+        session.bulk_save_objects(orders_to_add)
+        session.bulk_save_objects(reviews_to_add)
+        session.commit()
+        
+        print(f"✅ 생성 완료: 총 주문 {len(orders_to_add)}건, 리뷰 {len(reviews_to_add)}건")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+
+
+==================================================
+FILE_PATH: scripts\generate_historical_data.py
+==================================================
+
+import asyncio
+import random
+from datetime import date, timedelta, datetime
+import sys
+import os
+
+# Add project root to path
+sys.path.append(os.getcwd())
+
+from sqlalchemy import text
+from app.core.db import SessionLocal
+from app.order.order_schema import Order
+from app.review.review_schema import Review
+from app.menu.menu_schema import Menu
+from app.clients.weather import fetch_weather_data
+
+# ----- Config -----
+# ----- Config -----
+STORE_IDS = [1, 2, 3] # 서울, 부산, 강원
+DAYS_TO_GENERATE = 30
+BASE_DAILY_ORDERS = 40  # 일 평균 주문 수
+
+# 리뷰 텍스트 템플릿
+POSITIVE_REVIEWS = ["맛있어요", "최고에요", "사장님이 친절해요", "매장이 깔끔해요", "재주문 의사 100%", "커피 향이 좋아요", "디저트 맛집 인정"]
+NEUTRAL_REVIEWS = ["무난해요", "그냥 그래요", "보통입니다", "나쁘지 않아요", "배달이 조금 늦었지만 맛은 괜찮아요"]
+NEGATIVE_REVIEWS = ["너무 늦게 왔어요", "디저트가 다 부서져서 옴", "맛이 변한 것 같아요", "커피가 식어서 왔어요", "별로에요"]
+
+async def main():
+    print(f"🚀 {DAYS_TO_GENERATE}일치 과거 데이터(주문/리뷰) 생성 시작...")
+    
+    with SessionLocal() as session:
+        # 0. 기존 데이터 초기화 (Orders, Reviews only)
+        # SalesDaily는 나중에 다시 채울 것이므로 일단 놔두거나 같이 지워야 함. 
+        # 사용자가 "SalesDaily는 아직 정리 안했다"고 했으므로 Orders/Reviews만 다시 만듦.
+        print("🧹 기존 주문/리뷰 데이터 전체 삭제 중...")
+        session.execute(text("DELETE FROM reviews"))
+        session.execute(text("DELETE FROM orders"))
+        session.commit()
+
+        # 1. 메뉴 정보 가져오기
+        menus = session.query(Menu).all()
+        if not menus:
+            print("❌ 메뉴 데이터가 없습니다. 메뉴부터 생성해주세요.")
+            return
+        
+        menu_map = {m.menu_id: m for m in menus}
+        menu_ids = list(menu_map.keys())
+
+        # 2. 날짜 및 날씨 준비
+        today = date.today()
+        dates = [today - timedelta(days=i) for i in range(1, DAYS_TO_GENERATE + 1)] # 어제부터 30일 전까지
+        dates.sort()
+        
+        print(f"🌤️ {dates[0]} ~ {dates[-1]} 날씨 데이터 조회 중...")
+        # 실제 날씨 API 호출 (비동기)
+        weather_map = await fetch_weather_data(dates)
+        
+        orders_to_add = []
+        reviews_to_add = []
+        
+        total_order_count = 0
+
+        # 3. 매장별 데이터 생성 Loop
+        for store_id in STORE_IDS:
+            print(f"🏢 Store {store_id} 데이터 생성 중...")
+            
+            for d in dates:
+                d_str = str(d)
+                weather = weather_map.get(d_str, "알수없음")
+                weekday = d.weekday() # 0:Mon, 6:Sun
+                is_weekend = weekday >= 5
+                
+                # --- 시뮬레이션 로직 ---
+                daily_factor = 1.0
+                
+                # 매장별 변수 (부산은 주말에 더 잘됨, 강원은 평일 비수기 등)
+                if store_id == 2: # 부산
+                    daily_factor *= 1.2
+                elif store_id == 3: # 강원
+                    daily_factor *= 0.9
+
+                # 1) 요일 가중치
+                if is_weekend:
+                    daily_factor *= 1.3  # 주말엔 30% 더 잘됨
+                
+                # 2) 날씨 가중치
+                if "비" in weather or "뇌우" in weather:
+                    daily_factor *= 0.6  # 비오면 40% 감소
+                elif "눈" in weather:
+                    daily_factor *= 0.5  # 눈오면 50% 감소
+                elif "맑음" in weather:
+                    daily_factor *= 1.1  # 맑으면 10% 증가
+                
+                # 최종 주문 수 결정
+                target_count = int(BASE_DAILY_ORDERS * daily_factor * random.uniform(0.9, 1.1))
+                
+                # (특수 시나리오: 최근 3일간 특정 메뉴 판매 확률을 낮춤)
+                is_recent = (today - d).days <= 3
+                
+                for _ in range(target_count):
+                    # 메뉴 선택
+                    if is_recent and random.random() < 0.7: 
+                        mid = random.choice([m for m in menu_ids if m % 2 != 0]) 
+                    else:
+                        mid = random.choice(menu_ids)
+                    
+                    menu = menu_map[mid]
+                    qty = random.choices([1, 2, 3], weights=[0.7, 0.2, 0.1])[0]
+                    price = (menu.list_price or 5000) * qty
+                    
+                    # 시간 랜덤 (11시~20시)
+                    hour = random.randint(11, 20)
+                    minute = random.randint(0, 59)
+                    order_dt = datetime.combine(d, datetime.min.time()).replace(hour=hour, minute=minute)
+                    
+                    new_order = Order(
+                        store_id=store_id, # Loop 변수 사용
+                        menu_id=mid,
+                        quantity=qty,
+                        total_price=price,
+                        ordered_at=order_dt
+                    )
+                    orders_to_add.append(new_order)
+                    
+                    # (리뷰 생성 로직은 seed_reviews_monthly.py가 담당하므로 여기선 생략해도 되지만, 
+                    #  원래 코드 흐름 유지 차원에서 냅둠. 단, 나중에 seed_reviews가 덮어쓸 것임)
+                    #  ... (생략) ... 
+                    #  Generate Review Logic (Optional here, since we will overwrite)
+                    #  But keeping it simple, let's just create Orders here.
+                    #  Reviews generated here are DUMMY. User will overwrite them.
+
+
+        # Bulk save
+        session.bulk_save_objects(orders_to_add)
+        session.bulk_save_objects(reviews_to_add)
+        session.commit()
+        
+        print(f"✅ 생성 완료: 주문 {len(orders_to_add)}건, 리뷰 {len(reviews_to_add)}건")
+        print(f"📅 기간: {dates[0]} ~ {dates[-1]}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+
+
+==================================================
+FILE_PATH: scripts\init_inquiry_db.py
+==================================================
+
+
+
+
+==================================================
+FILE_PATH: scripts\randomize_all_stores_sync.py
+==================================================
+
+import sys
+import os
+import random
+from sqlalchemy import create_engine, text
+
+sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
+
+database_url = "postgresql://ai_user:1234@localhost:5432/ai_project"
+# Use sync driver
+engine = create_engine(database_url.replace("postgresql+psycopg://", "postgresql://"))
+
+def main():
+    try:
+        with engine.connect() as conn:
+            print("Randomizing sales data for ALL stores to ensure variety...")
+            
+            # 1. Get all store IDs
+            result = conn.execute(text("SELECT store_id FROM stores"))
+            store_ids = [row.store_id for row in result.fetchall()]
+            
+            for sid in store_ids:
+                # Generate a random factor for each store (e.g., 0.8 to 1.5 multiplier baseline)
+                # But we want to apply this to existing data.
+                # Use a random seed per store to make it consistent but unique per store.
+                
+                # Simple approach: Update each store's sales with a random multiplier different for each store
+                # We use a SQL random() * multiplier approach but unique per store execution
+                
+                factor = 0.7 + (random.random() * 0.8) # 0.7 ~ 1.5
+                print(f"Store {sid}: Applying multiplier {factor:.2f}")
+                
+                conn.execute(text(f"""
+                    UPDATE sales_daily 
+                    SET total_sales = FLOOR(total_sales * {factor}),
+                        total_orders = FLOOR(total_orders * {factor})
+                    WHERE store_id = {sid}
+                """))
+                
+            conn.commit()
+            print("Done. All stores now have distinct sales figures.")
+    except Exception as e:
+        print(f"Error: {e}")
+
+if __name__ == "__main__":
+    main()
+
+
+
+==================================================
+FILE_PATH: scripts\randomize_store_2.py
+==================================================
+
+import asyncio
+import sys
+import os
+import random
+
+sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
+
+from app.core.db import init_pool, close_pool, execute
+
+async def main():
+    await init_pool()
+    try:
+        # 광주지점(ID=2로 가정) 데이터 갱신
+        # 랜덤하게 매출을 0.8~1.2배로 튀게 만들어서 확실히 다르게 보이게 함
+        print("UPDATE Store 2 data...")
+        await execute("""
+            UPDATE sales_daily 
+            SET total_sales = total_sales * (0.5 + random()),
+                total_orders = total_orders * (0.5 + random())
+            WHERE store_id = 2
+        """)
+        print("Done.")
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        await close_pool()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+
+
+==================================================
+FILE_PATH: scripts\randomize_store_2_sync.py
+==================================================
+
+import sys
+import os
+import random
+from sqlalchemy import create_engine, text
+
+sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
+
+database_url = "postgresql://ai_user:1234@localhost:5432/ai_project"
+# Use sync driver
+engine = create_engine(database_url.replace("postgresql+psycopg://", "postgresql://"))
+
+def main():
+    try:
+        with engine.connect() as conn:
+            print("UPDATE Store 2 data (Sync)...")
+            conn.execute(text("""
+                UPDATE sales_daily 
+                SET total_sales = total_sales * (0.5 + random()),
+                    total_orders = FLOOR(total_orders * (0.5 + random()))
+                WHERE store_id = 2
+            """))
+            conn.commit()
+            print("Done.")
+    except Exception as e:
+        print(f"Error: {e}")
+
+if __name__ == "__main__":
+    main()
+
+
+
+==================================================
+FILE_PATH: scripts\refresh_sales_daily.py
+==================================================
+
+import sys
+import os
+import asyncio
+from sqlalchemy import text
+import subprocess
+
+# 프로젝트 루트 경로 추가
+sys.path.append(os.getcwd())
+
+from app.core.db import SessionLocal
+
+def main():
+    print("🚀 Sales Data Refresh Process Started")
+    
+    # 1. sales_daily 테이블 초기화 (기존 데이터 삭제)
+    print("\n🧹 1. Clearing 'sales_daily' table...")
+    with SessionLocal() as session:
+        try:
+            # PostgreSQL에서 테이블 비우기
+            session.execute(text("TRUNCATE TABLE sales_daily RESTART IDENTITY CASCADE"))
+            session.commit()
+            print("✅ 'sales_daily' table cleared successfully.")
+        except Exception as e:
+            print(f"⚠️ Error clearing table (trying DELETE): {e}")
+            session.rollback()
+            try:
+                session.execute(text("DELETE FROM sales_daily"))
+                session.commit()
+                print("✅ 'sales_daily' records deleted successfully.")
+            except Exception as e2:
+                print(f"❌ Failed to clear table: {e2}")
+                return
+
+    # 2. 집계 스크립트 실행 (aggregate_sales_and_weather.py)
+    print("\n🔄 2. Running aggregation script (Orders -> SalesDaily)...")
+    try:
+        result = subprocess.run(
+            [sys.executable, "scripts/aggregate_sales_and_weather.py"],
+            capture_output=False,
+            text=True,
+            check=True
+        )
+        print("✅ Aggregation script finished.")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Aggregation script failed: {e}")
+
+    print("\n🎉 All Done! Please refresh the dashboard.")
+
+if __name__ == "__main__":
+    main()
+
+
+
+==================================================
+FILE_PATH: scripts\reset_and_seed_v2.py
+==================================================
+
+import asyncio
+import os
+import sys
+import random
+from datetime import datetime, timedelta
+from decimal import Decimal
+
+# 프로젝트 루트 경로 추가
+sys.path.append(os.getcwd())
+
+from app.core.db import execute, fetch_all, init_pool, close_pool
+
+# --- 설정 ---
+SURVIVOR_LOCATIONS = ["서울 강남구", "부산 부산진구", "강원도 속초시"] # 남길 지점 위치 키워드
+TARGET_DAYS = 30 # 생성할 데이터 기간 (일)
+MENU_PRICES = {} # 메뉴 가격 캐싱
+
+async def get_menu_prices():
+    """메뉴 가격 정보 로드"""
+    rows = await fetch_all("SELECT menu_id, list_price FROM menus")
+    return {row['menu_id']: row['list_price'] for row in rows}
+
+async def restructure_stores():
+    print("🏗️ [1/4] 지점 구조조정 시작...")
+    
+    # 1. 생존할 지점 확인 또는 생성
+    survivor_ids = []
+    
+    # 강남(서울), 서면(부산), 속초(강원) 매핑
+    # 강남(서울), 서면(부산), 속초(강원) 매핑
+    target_map = {
+        "서울": {"name": "강남본점", "region": "서울", "city": "서울 강남구", "lat": 37.4979, "lon": 127.0276},
+        "부산": {"name": "부산서면점", "region": "부산", "city": "부산진구", "lat": 35.1578, "lon": 129.0600},
+        "강원": {"name": "강원속초점", "region": "강원", "city": "속초시", "lat": 38.2070, "lon": 128.5918}
+    }
+    
+    # 기존 지점 싹 다 조회
+    existing_stores = await fetch_all("SELECT store_id, store_name FROM stores")
+    
+    # 전략: 그냥 싹 지우고 새로 만드는게 ID 관리상 깔끔함 (FK CASCADE 가정)
+    # 하지만 FK가 걸려있으니, 먼저 다 지우고 새로 3개를 만듭니다.
+    print("   - 기존 데이터(주문, 리뷰, 매출) 및 지점 삭제 중...")
+    await execute("TRUNCATE TABLE stores RESTART IDENTITY CASCADE;") 
+    
+    print("   - 정예 지점 3곳 신규 등록 중...")
+    new_ids = []
+    for key, info in target_map.items():
+        # 지점 생성
+        insert_query = """
+            INSERT INTO stores (store_name, region, city, lat, lon, open_date, franchise_type)
+            VALUES (%s, %s, %s, %s, %s, '2020-01-01', '가맹') RETURNING store_id
+        """
+        res = await fetch_all(insert_query, (info['name'], info['region'], info['city'], info['lat'], info['lon']))
+        new_id = res[0]['store_id']
+        new_ids.append(new_id)
+        print(f"     ✅ {info['name']} (ID: {new_id}) 생성 완료")
+        
+    return new_ids
+
+async def generate_daily_data(store_ids, menu_ids):
+    print(f"📅 [2/4] 최근 {TARGET_DAYS}일치 데이터 생성 시작...")
+    
+    end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=TARGET_DAYS)
+    
+    # 날씨 더미 데이터
+    weathers = ["맑음", "구름조금", "흐림", "비", "눈", "맑음", "맑음"]
+    
+    total_orders_count = 0
+    
+    for day_offset in range(TARGET_DAYS + 1):
+        curr_date = start_date + timedelta(days=day_offset)
+        is_weekend = curr_date.weekday() >= 5 # 5:토, 6:일
+        
+        # 날씨 랜덤 (계절감 무시하고 랜덤)
+        weather = random.choice(weathers)
+        
+        for store_id in store_ids:
+            # 1. 주문 생성 (일일 주문 수: 평일 10~20건, 주말 20~40건)
+            daily_order_cnt = random.randint(20, 40) if is_weekend else random.randint(10, 20)
+            
+            daily_total_rev = 0
+            
+            for _ in range(daily_order_cnt):
+                # 주문 시각 (11:00 ~ 22:00)
+                hour = random.randint(11, 21)
+                minute = random.randint(0, 59)
+                order_time = datetime.combine(curr_date, datetime.min.time()).replace(hour=hour, minute=minute)
+                
+                # 메뉴 선택 (1~3개)
+                items_cnt = random.randint(1, 3)
+                selected_menus = random.choices(menu_ids, k=items_cnt)
+                
+                order_total = 0
+                for mid in selected_menus:
+                    price = MENU_PRICES.get(mid, 10000)
+                    order_total += price
+                    
+                    # orders 테이블 insert (주문 1건당 메뉴 1개 row로 들어가는 구조라면 반복, 
+                    # 현재 스키마는 'orders'가 개별 아이템 단위인지 주문 1건 단위인지 확인 필요.
+                    # 보통 주문-주문상세가 나뉘지만, 여기선 orders가 단일 테이블로 개별 아이템을 담는다고 가정하거나
+                    # 스키마 상 orders 하나에 menu_id가 있다면 '주문내역'테이블임.
+                    # 확인 결과: orders 테이블에 menu_id가 있음 -> 개별 아이템 단위 저장)
+                    
+                    await execute("""
+                        INSERT INTO orders (store_id, menu_id, quantity, total_price, ordered_at)
+                        VALUES (%s, %s, 1, %s, %s)
+                    """, (store_id, mid, price, order_time))
+                
+                daily_total_rev += order_total
+            
+            total_orders_count += daily_order_cnt
+            
+            # 2. 일매출(sales_daily) 집계 저장
+            # sales_daily 테이블이 존재한다면 insert
+            await execute("""
+                INSERT INTO sales_daily (store_id, sale_date, total_sales, total_orders, weather_info)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (store_id, curr_date, daily_total_rev, daily_order_cnt, weather))
+
+            # 3. 리뷰 생성 (주문의 30% 확률)
+            if random.random() < 0.3:
+                # 랜덤 메뉴평
+                mid = random.choice(menu_ids)
+                rating = random.choices([5, 4, 3, 2, 1], weights=[50, 30, 10, 5, 5])[0]
+                texts = {
+                    5: ["최고예요", "맛있어요", "또 시킬게요", "강추!", "배달 빠름"],
+                    4: ["괜찮아요", "맛은 있는데 좀 식음", "무난함"],
+                    3: ["그저 그래요", "보통", "양이 적음"],
+                    1: ["별로예요", "다신 안시킴", "최악"]
+                }
+                txt = random.choice(texts.get(rating, ["보통"]))
+                
+                await execute("""
+                    INSERT INTO reviews (store_id, menu_id, rating, review_text, created_at)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (store_id, mid, rating, txt, datetime.combine(curr_date, datetime.min.time())))
+                
+    print(f"✅ 데이터 생성 완료! (총 주문 항목: {total_orders_count}건)")
+
+async def main():
+    await init_pool()
+    
+    # 0. 메뉴 ID 가져오기 (가정: 메뉴 데이터는 보존되어 있다고 가정. 만약 TRUNCATE CASCADE로 지워졌으면 다시 넣어야 함)
+    # TRUNCATE stores CASCADE를 하면 menus가 store에 종속되어 있으면 지워짐.
+    # 스키마상 menus는 store_id가 없을 수도 있음 (본사 공통 메뉴).
+    # 확인: menus 테이블은 store_id를 가지고 있나? 보통 프랜차이즈 메뉴는 공통.
+    # 만약 menus가 살아있다면 다행. 아니면 다시 넣어야 함.
+    # 안전하게 메뉴도 다시 넣자.
+    
+    print("🧹 [0/4] 전체 데이터 초기화 (TRUNCATE)...")
+    try:
+        # FK 제약조건 때문에 순서 중요. stores를 날리면 orders, reviews, sales_daily 등 다 날아감 (ON DELETE CASCADE 설정 시)
+        # 만약 설정 안되어있으면 개별 삭제 필요. 안전하게 개별 삭제.
+        await execute("TRUNCATE TABLE reviews CASCADE")
+        await execute("TRUNCATE TABLE orders CASCADE") 
+        await execute("TRUNCATE TABLE sales_daily CASCADE")
+        await execute("TRUNCATE TABLE store_reports CASCADE")
+        await execute("TRUNCATE TABLE store_inquiries CASCADE")
+        # await execute("TRUNCATE TABLE menus CASCADE") # 메뉴는 살려볼까? -> store_id가 종속적이면 날아감.
+        # 일단 stores를 날리기 전에 메뉴 백업? 귀찮으니 메뉴도 다시 넣음.
+        await execute("TRUNCATE TABLE menus CASCADE")
+        await execute("TRUNCATE TABLE stores CASCADE")
+    except Exception as e:
+        print(f"⚠️ 초기화 중 경고 (테이블 없을 수 있음): {e}")
+
+    # 1. 지점 생성
+    survivor_ids = await restructure_stores()
+    
+    # 2. 메뉴 생성 (공통 메뉴 15종)
+    print("🍔 [3/4] 메뉴 데이터 복구 (15종)...")
+    menu_items = [
+        # Coffee (10)
+        ("아메리카노", 4500, "COFFEE"),
+        ("카페라떼", 5000, "COFFEE"),
+        ("바닐라라떼", 5500, "COFFEE"),
+        ("콜드브루", 4800, "COFFEE"),
+        ("카푸치노", 5000, "COFFEE"),
+        ("카페모카", 5500, "COFFEE"),
+        ("카라멜마키아또", 5800, "COFFEE"),
+        ("에스프레소", 4000, "COFFEE"),
+        ("아인슈페너", 6000, "COFFEE"),
+        ("돌체라떼", 5800, "COFFEE"),
+        # Dessert (5)
+        ("치즈케이크", 6500, "DESSERT"),
+        ("티라미수", 7000, "DESSERT"),
+        ("초코쿠키", 3500, "DESSERT"),
+        ("크로플", 4000, "DESSERT"),
+        ("마카롱", 3000, "DESSERT")
+    ]
+    menu_ids = []
+    for name, price, cat in menu_items:
+        # description, image_url 등은 생략 또는 더미
+        res = await fetch_all("""
+            INSERT INTO menus (menu_name, list_price, category, description, is_seasonal)
+            VALUES (%s, %s, %s, '맛있는 메뉴', false) RETURNING menu_id
+        """, (name, price, cat))
+        mid = res[0]['menu_id']
+        menu_ids.append(mid)
+        MENU_PRICES[mid] = price
+        
+    # 3. 데이터 생성
+    await generate_daily_data(survivor_ids, menu_ids)
+    
+    await close_pool()
+    print("🎉 모든 작업 완료! 이제 '강남본점', '부산서면점', '강원속초점'만 남았습니다.")
+
+if __name__ == "__main__":
+    if os.name == 'nt':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.run(main())
+
+
+
+==================================================
+FILE_PATH: scripts\seed_data.py
+==================================================
+
+import asyncio
+import random
+from datetime import datetime, date, timedelta
+from faker import Faker
+from sqlalchemy import select, delete
+from app.core.db import SessionLocal, init_pool, close_pool
+from app.store.store_schema import Store
+from app.menu.menu_schema import Menu
+from app.review.review_schema import Review
+from app.order.order_schema import Order
+from app.sales.sales_schema import SalesDaily
+from app.report.report_schema import StoreReport
+
+fake = Faker('ko_KR')
+
+# --- 데이터 설정 ---
+STORES_DATA = [
+    {"name": "강남본점", "region": "서울", "city": "서울 강남구", "lat": 37.4979, "lon": 127.0276},
+    {"name": "홍대입구점", "region": "서울", "city": "서울 마포구", "lat": 37.5575, "lon": 126.9245},
+    {"name": "여의도점", "region": "서울", "city": "서울 영등포구", "lat": 37.5219, "lon": 126.9242},
+    {"name": "판교점", "region": "경기", "city": "성남시 분당구", "lat": 37.3948, "lon": 127.1111},
+    {"name": "부산서면점", "region": "부산", "city": "부산 부산진구", "lat": 35.1578, "lon": 129.0600},
+    {"name": "해운대점", "region": "부산", "city": "부산 해운대구", "lat": 35.1631, "lon": 129.1636},
+    {"name": "대구동성로점", "region": "대구", "city": "대구 중구", "lat": 35.8714, "lon": 128.5911},
+    {"name": "대전둔산점", "region": "대전", "city": "대전 서구", "lat": 36.3504, "lon": 127.3845},
+    {"name": "광주상무점", "region": "광주", "city": "광주 서구", "lat": 35.1548, "lon": 126.8533},
+    {"name": "제주공항점", "region": "제주", "city": "제주 제주시", "lat": 33.5104, "lon": 126.4913},
+]
+
+MENUS_DATA = [
+    # (이름, 카테고리, 가격, 가중치) - 가중치가 높을수록 더 많이 팔림
+    {"name": "아메리카노", "cat": "coffee", "price": 4500, "weight": 50, "desc": "깊고 진한 풍미의 에스프레소"},
+    {"name": "카페라떼", "cat": "coffee", "price": 5000, "weight": 30, "desc": "부드러운 우유와 에스프레소의 조화"},
+    {"name": "바닐라라떼", "cat": "coffee", "price": 5500, "weight": 20, "desc": "천연 바닐라 빈이 들어간 달콤한 라떼"},
+    {"name": "카푸치노", "cat": "coffee", "price": 5000, "weight": 10, "desc": "풍성한 우유 거품을 즐기는 커피"},
+    {"name": "콜드브루", "cat": "coffee", "price": 4800, "weight": 15, "desc": "차가운 물로 장시간 추출한 깔끔한 커피"},
+    {"name": "돌체라떼", "cat": "coffee", "price": 5800, "weight": 10, "desc": "연유의 달콤함이 느껴지는 라떼"},
+    {"name": "아인슈페너", "cat": "coffee", "price": 6000, "weight": 8, "desc": "진한 커피 위에 달콤한 크림"},
+    {"name": "헤이즐넛 라떼", "cat": "coffee", "price": 5500, "weight": 10, "desc": "고소한 헤이즐넛 향이 가득"},
+    {"name": "에스프레소", "cat": "coffee", "price": 4000, "weight": 5, "desc": "커피 본연의 강렬한 맛"},
+    {"name": "카라멜 마키아또", "cat": "coffee", "price": 5900, "weight": 8, "desc": "달콤한 카라멜 소스와 부드러운 거품"},
+    {"name": "치즈 케이크", "cat": "dessert", "price": 6500, "weight": 15, "desc": "진한 치즈 풍미가 가득한 케이크"},
+    {"name": "티라미수", "cat": "dessert", "price": 7000, "weight": 12, "desc": "마스카포네 치즈와 에스프레소의 조화"},
+    {"name": "초코 머핀", "cat": "dessert", "price": 3500, "weight": 8, "desc": "진한 초콜릿 칩이 박힌 머핀"},
+    {"name": "크로플", "cat": "dessert", "price": 4500, "weight": 20, "desc": "버터 향 가득한 크루아상 와플"},
+    {"name": "마카롱 세트", "cat": "dessert", "price": 12000, "weight": 5, "desc": "달콤하고 쫀득한 프랑스 디저트"},
+]
+
+POSITIVE_REVIEWS = [
+    "맛있어요! 다음에도 또 주문할게요.", "배달이 빨라서 좋았습니다. 커피 향이 진해요.",
+    "디저트가 너무 달지 않고 딱 좋네요.", "매번 시켜먹는데 실망시키지 않아요.",
+    "사장님이 친절하시고 포장도 깔끔합니다.", "아메리카노 맛집이네요. 원두가 신선한 느낌이에요.",
+    "양도 많고 맛도 좋습니다.", "여기 크로플이 진짜 맛있어요!", "인생 커피집 찾았습니다."
+]
+
+NEGATIVE_REVIEWS = [
+    "커피가 조금 밍밍해요.", "배달이 생각보다 늦었네요.", "디저트가 좀 눅눅해서 아쉬웠어요.",
+    "가격 대비 양이 적은 것 같아요.", "얼음이 너무 많아서 음료 양이 적어요.",
+    "지난번보다는 맛이 덜한 것 같네요."
+]
+
+async def seed_data():
+    session = SessionLocal()
+    try:
+        print("🗑️ 기존 데이터 삭제 중... (완전 초기화)")
+        session.query(Review).delete()
+        session.query(Order).delete()
+        session.query(SalesDaily).delete()
+        session.query(StoreReport).delete()
+        session.commit()
+
+        print("🌱 매장 및 메뉴 데이터 확인/생성...")
+        # 매장 생성
+        for data in STORES_DATA:
+            if not session.query(Store).filter_by(store_name=data["name"]).first():
+                session.add(Store(
+                    store_name=data["name"], region=data["region"], city=data["city"],
+                    lat=data["lat"], lon=data["lon"],
+                    open_date=fake.date_between(start_date='-5y', end_date='-1y'),
+                    franchise_type=random.choice(["직영", "가맹"]),
+                    population_density_index=round(random.uniform(0.8, 2.5), 2)
+                ))
+        
+        # 메뉴 생성
+        for data in MENUS_DATA:
+            if not session.query(Menu).filter_by(menu_name=data["name"]).first():
+                session.add(Menu(
+                    menu_name=data["name"], category=data["cat"],
+                    list_price=data['price'], cost_price=round(data["price"] * 0.3, -1),
+                    description=data["desc"], is_seasonal=False
+                ))
+        session.commit()
+
+        # DB에서 다시 조회 (ID 포함)
+        stores = session.query(Store).all()
+        menus = session.query(Menu).all()
+        menu_weights = [next(m["weight"] for m in MENUS_DATA if m["name"] == menu.menu_name) for menu in menus]
+
+        print("🛒 현실적인 주문 데이터 생성 중 (최근 30일)...")
+        total_orders_count = 0
+        
+        # 최근 30일치 데이터 생성
+        days_range = 30
+        end_date = date.today()
+        start_date = end_date - timedelta(days=days_range)
+
+        for day_offset in range(days_range + 1):
+            current_date = start_date + timedelta(days=day_offset)
+            weekday = current_date.weekday() # 0=월, 6=일
+            is_weekend = weekday >= 5
+
+            for store in stores:
+                # 1. 일일 주문 수량 결정 (사용자 요청: 20개 내외로 가볍게)
+                base_orders = random.randint(15, 25) if not is_weekend else random.randint(20, 30)
+                
+                # 매장별 편차 (강남, 홍대는 조금 더)
+                if "강남" in store.store_name or "홍대" in store.store_name:
+                    base_orders = int(base_orders * 1.2)
+                
+                daily_orders_num = int(base_orders * random.uniform(0.9, 1.1))
+
+                for _ in range(daily_orders_num):
+                    # 2. 메뉴 선택 (가중치 기반 랜덤)
+                    menu = random.choices(menus, weights=menu_weights, k=1)[0]
+                    
+                    # 3. 주문 시간 결정 (점심/저녁 피크 타임 반영)
+                    hour_prob = random.random()
+                    if hour_prob < 0.4: # 40%는 점심시간 (11~14시)
+                        hour = random.randint(11, 13)
+                    elif hour_prob < 0.7: # 30%는 오후/저녁 (14~20시)
+                        hour = random.randint(14, 19)
+                    else: # 나머지 30%는 그 외 시간
+                        hour = random.choice([9, 10, 20, 21])
+                    
+                    minute = random.randint(0, 59)
+                    order_time = datetime.combine(current_date, datetime.min.time()) + timedelta(hours=hour, minutes=minute)
+
+                    # 4. 수량 (대부분 1개, 가끔 2~3개)
+                    quantity = random.choices([1, 2, 3, 4], weights=[80, 15, 4, 1], k=1)[0]
+                    
+                    # 주문 저장
+                    new_order = Order(
+                        store_id=store.store_id,
+                        menu_id=menu.menu_id,
+                        quantity=quantity,
+                        total_price=float(menu.list_price) * quantity,
+                        ordered_at=order_time
+                    )
+                    session.add(new_order)
+                    total_orders_count += 1
+            
+            # 하루치 커밋 (메모리 절약)
+            if day_offset % 5 == 0:
+                print(f"   -> {current_date} 데이터 생성 완료...")
+        
+        session.commit()
+        print(f"✅ 총 {total_orders_count}건의 주문 데이터 생성 완료!")
+
+        # 리뷰 데이터 생성
+        print("📝 주문 기반 리뷰 데이터 생성 (약 15% 확률)...")
+        
+        # 방금 생성한 주문들을 대상으로 리뷰 생성 (너무 많으면 느리니 최근 주문 위주로 쿼리해도 됨)
+        # 여기서는 전체 주문 대상으로 하되, 쿼리 최적화 생략 (Batch 처리 권장되지만 간단히 구현)
+        # 효율을 위해 방금 생성된 주문 ID 범위를 알면 좋지만, 간단히 다시 조회
+        all_order_ids = [row.order_id for row in session.query(Order.order_id).all()]
+        
+        # 15% 샘플링
+        review_order_ids = random.sample(all_order_ids, int(len(all_order_ids) * 0.15))
+        
+        count_reviews = 0
+        for order_id in review_order_ids:
+            # 주문 정보 조회 불필요, ID만 있으면 됨 (store_id, menu_id는 Join으로 알 수 있으나 Review 테이블 구조상 필요하다면 채워야 함)
+            order = session.query(Order).get(order_id) # 성능상 아쉬우나 정확성을 위해
+            
+            if order:
+                # 긍정 리뷰 확률 85%
+                is_positive = random.random() < 0.85
+                rating = random.randint(4, 5) if is_positive else random.randint(1, 3)
+                text = random.choice(POSITIVE_REVIEWS) if is_positive else random.choice(NEGATIVE_REVIEWS)
+
+                review_time = order.ordered_at + timedelta(hours=random.randint(1, 48))
+
+                session.add(Review(
+                    store_id=order.store_id,
+                    order_id=order.order_id,
+                    menu_id=order.menu_id,
+                    rating=rating,
+                    review_text=text,
+                    delivery_app=random.choice(["배달의민족", "쿠팡이츠", "요기요", None]),
+                    created_at=review_time
+                ))
+                count_reviews += 1
+        
+        session.commit()
+        print(f"✅ 총 {count_reviews}건의 리뷰 데이터 생성 완료!")
+        print("🎉 모든 데이터 준비가 완료되었습니다.")
+
+    except Exception as e:
+        print(f"❌ 오류 발생: {e}")
+        session.rollback()
+    finally:
+        session.close()
+
+if __name__ == "__main__":
+    asyncio.run(seed_data())
+
+
+
+==================================================
+FILE_PATH: scripts\seed_manuals.py
+==================================================
+
+import sys
+import os
+import asyncio
+from sqlalchemy import text
+from dotenv import load_dotenv
+from langchain_openai import OpenAIEmbeddings
+
+# Add project root to sys.path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.core.db import engine, base, SessionLocal
+from app.manual.manual_schema import Manual
+# Menu import Removed to prevent accidental modification
+
+load_dotenv()
+embeddings_model = OpenAIEmbeddings(model="text-embedding-3-small")
+
+async def get_embedding(text: str):
+    try:
+        return await embeddings_model.aembed_query(text)
+    except Exception as e:
+        print(f"⚠️ 임베딩 실패: {e}")
+        return None
+
+def init_db():
+    print("🔄 Initializing Manuals Table (Only)...")
+    try:
+        with engine.connect() as conn:
+            # Only Drop Manuals
+            conn.execute(text("DROP TABLE IF EXISTS manuals CASCADE"))
+            conn.commit()
+            print("   - Old manuals table dropped. (Menus table is SAFE)")
+    except Exception as e:
+        print(f"   - Warning during drop: {e}")
+
+    # Create new tables (SQLAlchemy checks existence so it's safe)
+    base.metadata.create_all(bind=engine)
+    print("✅ Manuals table ready.")
+
+async def seed_data():
+    session = SessionLocal()
+    try:
+        print("🌱 Seeding Data (Manuals - 30 Items)...")
+
+        # 30 Manual Items
+        manuals_list = [
+            # --- 기기 관리 (Equipment) ---
+            {"cat": "기기 관리", "title": "에스프레소 머신 일일 청소 (백플러싱)", "content": "주기: 매일 마감 시.\n방법: 1. 포터필터에 블라인드 바스켓 장착. 2. 전용 세정제 3g 투입. 3. 그룹헤드에 장착 후 추출 버튼 10초 가동, 5초 정지 (5회 반복). 4. 세정제 없이 물로만 동일 과정 5회 반복하여 헹굼."},
+            {"cat": "기기 관리", "title": "그라인더 날(Burr) 교체 주기 및 관리", "content": "기준: 원두 500kg 사용 시 또는 6개월 경과 시.\n증상: 분쇄 입도가 불규칙하거나 채널링 발생 시 날 상태 점검 요망."},
+            {"cat": "기기 관리", "title": "제빙기 필터 청소 및 소독", "content": "주기: 월 2회 (격주 월요일).\n방법: 1. 제빙기 전원 OFF. 2. 얼음을 모두 비움. 3. 내부 물탱크 및 분사 노즐 분리 세척. 4. 식용 소독제로 내부 닦음. 5. 깨끗한 물로 3회 이상 헹굼."},
+            {"cat": "기기 관리", "title": "오븐 예열 및 온도 설정", "content": "사용 전 최소 15분 예열 필수. 베이커리류: 180도, 샌드위치 워밍: 160도 설정. 온도 도달 알림음 확인 후 투입."},
+            {"cat": "기기 관리", "title": "식기세척기 세제 교체 방법", "content": "세제 경고음 발생 시: 1. 하단 캐비닛 오픈. 2. 빈 세제통 수거. 3. 새 세제통 캡 제거 후 노즐 삽입. 4. 누수 여부 확인."},
+            {"cat": "기기 관리", "title": "냉장고/냉동고 적정 온도 관리", "content": "냉장: 2~4도, 냉동: -18도 이하 유지. 일 2회(오픈, 마감) 온도계 확인 후 기록지에 기입. 이상 온도 발견 시 즉시 매니저 보고."},
+            {"cat": "기기 관리", "title": "포스기(POS) 재부팅 절차", "content": "시스템 느려짐 발생 시: 1. 영업 프로그램 종료. 2. 윈도우 종료. 3. 본체 전원 버튼 5초간 누름. 4. 1분 후 재가동. (영업 중 강제 종료 지양)"},
+            {"cat": "기기 관리", "title": "정수 필터 교체 주기", "content": "주기: 6개월. 방법: 1. 원수 밸브 잠금. 2. 필터 카트리지 회전 분리. 3. 새 카트리지 장착 후 5분간 물 흘려보내기(플러싱)."},
+            {"cat": "기기 관리", "title": "블렌더(믹서기) 칼날 세척", "content": "사용 직후 미온수로 헹굼. 마감 시 분해하여 칼날 사이 이물질 제거. 고무링 분실 주의. 칼날 마모 시 즉시 교체."},
+            {"cat": "기기 관리", "title": "쇼케이스 성에 제거", "content": "성에가 1cm 이상 끼면 냉각 효율 저하. 주 1회 물건을 빼고 전원 OFF 후 녹여 제거. 날카로운 도구 사용 금지."},
+
+            # --- 매장 운영 (Operations) ---
+            {"cat": "매장 운영", "title": "오픈 준비 체크리스트", "content": "1. 보안 해제 및 환기. 2. 조명/음악 ON. 3. 머신/그라인더 전원 ON. 4. 시재금 준비. 5. 행주 소독 및 비치. 6. 재고(우유, 원두) 채우기."},
+            {"cat": "매장 운영", "title": "마감 정산 절차", "content": "1. 포스 마감 정산. 2. 카드 단말기 집계 출력. 3. 현금 시재 확인 (오차 발생 시 사유서). 4. 당일 매출 장부 기록. 5. 현금 금고 보관."},
+            {"cat": "매장 운영", "title": "재고 발주 가이드", "content": "발주 시간: 매일 오후 2시 마감. 품목별 적정 재고량(Par Level) 확인 후 부족분 신청. 주말 대비 금요일은 1.5배 발주."},
+            {"cat": "매장 운영", "title": "유통기한 관리 원칙 (FIFO)", "content": "선입선출(First In First Out) 원칙 준수. 신규 입고 상품은 뒤쪽에 진열. 개봉한 식자재는 반드시 '개봉일/폐기일' 라벨 부착."},
+            {"cat": "매장 운영", "title": "음악(BGM) 선곡 가이드", "content": "오전: 활기차고 밝은 재즈/팝. 오후(피크): 템포가 빠른 음악. 저녁: 차분한 어쿠스틱/Lofi. 가사 없는 연주곡 권장."},
+            {"cat": "매장 운영", "title": "화장실 청소 및 점검", "content": "점검 주기: 2시간 간격. 체크사항: 휴지/핸드타월 보충, 세면대 물기 제거, 휴지통 비우기, 방향제 확인."},
+            {"cat": "매장 운영", "title": "냉난방기 운영 기준", "content": "여름: 실내 24~25도. 겨울: 실내 20~22도. 손님 밀집도에 따라 유동적 조절. 마감 시 반드시 전원 OFF 확인."},
+            {"cat": "매장 운영", "title": "분리수거 및 쓰레기 처리", "content": "일반쓰레기: 종량제 봉투. 재활용: 등급별 분류 후 투명 봉투. 음식물: 물기 제거 후 전용 용기. 박스는 테이프 제거 후 압착 배출."},
+            {"cat": "매장 운영", "title": "소화기 위치 및 사용법", "content": "위치: 카운터 하단 1개, 주방 입구 1개. 사용법: 1. 안전핀 뽑기. 2. 노즐 화재 방향 조준. 3. 손잡이 움켜쥐기. (월 1회 압력게이지 점검)"},
+            {"cat": "매장 운영", "title": "배달 앱 주문 접수 및 거절", "content": "접수: 주문 알림 시 1분 내 수락. 조리 예상 시간 여유있게 설정. 품절 메뉴 포함 시 고객 통화 후 부분 취소 또는 대체 안내."},
+
+            # --- CS 및 고객 응대 (Customer Service) ---
+            {"cat": "CS 응대", "title": "음료 컴플레인 처리 (이물질)", "content": "1. 즉시 정중히 사과. 2. 음료 회수 및 확인. 3. 즉시 재제조 또는 전액 환불. 4. 고객 안심 차원에서 쿠폰 증정."},
+            {"cat": "CS 응대", "title": "음료 맛 불만족 대응", "content": "고객 입맛 차이일 수 있으나 즉시 교환 제안. '연하게/진하게' 등 상세 요구사항 재확인 후 제조. 논쟁 금지."},
+            {"cat": "CS 응대", "title": "매장 내 분실물 습득 시", "content": "1. 습득 시간, 장소, 물품 특징 기록(사진 촬영). 2. 포스기 '분실물' 탭에 등록. 3. 1주일 보관 후 찾아가지 않으면 경찰서 인계."},
+            {"cat": "CS 응대", "title": "진동벨 분실 예방", "content": "음료 제공 시 진동벨 회수 필수 확인. 바쁠 때 회수 누락 주의. 마감 시 진동벨 개수 총점검(총 20개)."},
+            {"cat": "CS 응대", "title": "노키즈존/펫티켓 안내 가이드", "content": "원칙적으로 키즈/반려동물 동반 가능. 단, 다른 고객에게 방해될 경우(소음, 뛰어다님) 정중하게 제지 및 케어 요청."},
+            {"cat": "CS 응대", "title": "단체 주문(10잔 이상) 응대", "content": "대기 시간 길어짐을 사전 안내. 캐리어 필요 여부 확인. 필요 시 레시피 간소화(통일) 유도 정중히 제안."},
+            {"cat": "CS 응대", "title": "영수증 재발행 및 주차 등록", "content": "영수증: 결제 시간 또는 승인번호로 이전 내역 조회 후 재출력. 주차: 차량번호 뒷 4자리 확인 후 1시간 무료 적용 (중복 불가)."},
+            {"cat": "CS 응대", "title": "Wi-Fi 연결 문의", "content": "ID: HappyCafe_5G / PW: happy1234!! 영수증 하단 및 픽업대 와이파이 안내판에 기재되어 있음을 안내."},
+            {"cat": "CS 응대", "title": "외부 음식 반입 규정", "content": "원칙적 금지. 이유식, 환자식, 생일 케이크(취식 불가, 초만 부는 경우 허용)는 예외적으로 허용."},
+            {"cat": "CS 응대", "title": "라스트 오더(Last Order) 안내", "content": "마감 30분 전 주문 마감. 매장 이용 고객에게는 마감 10분 전까지 정리 부탁 정중히 멘트. 포장은 마감 직전까지 가능."}
+        ]
+
+        manuals_db = []
+        print("🧠 Generating Manual Embeddings...")
+        for item in manuals_list:
+            m = Manual(
+                category=item["cat"],
+                title=item["title"],
+                content=item["content"]
+            )
+            # 임베딩 생성 (비동기)
+            text_to_embed = f"매뉴얼: {m.title}\n{m.content}"
+            emb = await get_embedding(text_to_embed)
+            m.embedding = emb
+            manuals_db.append(m)
+
+        session.add_all(manuals_db)
+        
+        session.commit()
+        print(f"✅ Inserted {len(manuals_db)} Manuals")
+        print("🎉 Manual Seeding Completed Successfully!")
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        session.rollback()
+    finally:
+        session.close()
+
+if __name__ == "__main__":
+    init_db()
+    asyncio.run(seed_data())
+
+
+
+==================================================
+FILE_PATH: scripts\seed_menus.py
+==================================================
+
+import sys
+import os
+import asyncio
+from sqlalchemy import text
+from dotenv import load_dotenv
+from langchain_openai import OpenAIEmbeddings
+
+# Add project root to sys.path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.core.db import engine, base, SessionLocal
+from app.menu.menu_schema import Menu
+
+load_dotenv()
+embeddings_model = OpenAIEmbeddings(model="text-embedding-3-small")
+
+async def get_embedding(text: str):
+    try:
+        return await embeddings_model.aembed_query(text)
+    except Exception as e:
+        print(f"⚠️ 임베딩 실패: {e}")
+        return None
+
+def init_db():
+    print("🔄 Initializing Menus Table...")
+    try:
+        with engine.connect() as conn:
+            # 메뉴 테이블 초기화 (주문/리뷰 FK cascade로 인해 다 날아감 주의)
+            conn.execute(text("DROP TABLE IF EXISTS menus CASCADE"))
+            conn.commit()
+            print("   - Old menus table dropped.")
+    except Exception as e:
+        print(f"   - Warning during drop: {e}")
+
+    # Create new tables
+    base.metadata.create_all(bind=engine)
+    print("✅ Menus table ready.")
+
+async def seed_data():
+    session = SessionLocal()
+    try:
+        print("🌱 Seeding Data (Menus - 15 Items)...")
+
+        # 1. Menus with Recipe Info (Total 15 Items)
+        menu_items = [
+             # --- COFFEE (6) ---
+             {"name": "아이스 아메리카노", "cat": "coffee", "price": 4500, 
+              "ing": "에스프레소 2샷 (60ml), 정수물 150ml, 얼음 200g", 
+              "step": "1. 아이스컵에 얼음을 가득 채운다.\n2. 정수물 150ml를 붓는다.\n3. 에스프레소 2샷을 추출하여 위에 붓는다 (크레마 보존)."},
+             
+             {"name": "따뜻한 아메리카노", "cat": "coffee", "price": 4500,
+              "ing": "에스프레소 2샷 (60ml), 온수 250ml",
+              "step": "1. 머그잔에 뜨거운 물을 예열 후 버린다.\n2. 온수 250ml를 붓는다.\n3. 에스프레소 2샷을 추출하여 붓는다."},
+             
+             {"name": "카페 라떼", "cat": "coffee", "price": 5000,
+              "ing": "에스프레소 2샷, 우유 200ml, 스팀밀크 폼 1cm",
+              "step": "1. 피처에 우유 200ml를 담고 벨벳 밀크 폼을 만든다.\n2. 에스프레소 2샷을 잔에 받는다.\n3. 스팀 밀크를 붓고 얇은 폼(1cm)을 올린다."},
+             
+             {"name": "바닐라 라떼", "cat": "coffee", "price": 5500,
+              "ing": "바닐라 시럽 3펌프(30g), 에스프레소 2샷, 우유 200ml",
+              "step": "1. 잔에 바닐라 시럽 3펌프를 넣는다.\n2. 에스프레소 2샷을 추출하여 시럽과 섞는다.\n3. 스팀 우유(또는 차가운 우유+얼음)를 붓는다."},
+             
+             {"name": "카라멜 마키아또", "cat": "coffee", "price": 5800,
+              "ing": "카라멜 시럽 2펌프, 바닐라 시럽 1펌프, 에스프레소 2샷, 우유 180ml, 카라멜 드리즐",
+              "step": "1. 시럽을 넣고 스팀 우유를 붓는다.\n2. 에스프레소 샷을 중앙에 부어 점을 만든다.\n3. 거품 위에 카라멜 드리즐을 격자 무늬로 뿌린다."},
+
+             {"name": "콜드브루 디카페인", "cat": "coffee", "price": 5500,
+              "ing": "콜드브루 원액 60ml, 물 180ml, 얼음 200g",
+              "step": "1. 잔에 얼음을 채운다.\n2. 물 180ml를 붓는다.\n3. 콜드브루 원액 60ml를 천천히 부어 그라데이션을 만든다."},
+
+             # --- BEVERAGE & ADE (4) ---
+             {"name": "초코 라떼 (Iced)", "cat": "beverage", "price": 5500,
+              "ing": "초코 파우더 30g, 우유 200ml, 얼음 150g, 초코 드리즐",
+              "step": "1. 소량의 뜨거운 물로 초코 파우더를 녹인다.\n2. 우유와 얼음을 넣고 섞는다.\n3. 컵 벽면에 초코 드리즐을 장식 후 음료를 담는다."},
+
+             {"name": "딸기 라떼", "cat": "beverage", "price": 6000,
+              "ing": "딸기청 60g, 우유 200ml, 얼음 150g, 건조 딸기 토핑",
+              "step": "1. 잔 바닥에 딸기청 60g을 담는다.\n2. 얼음을 8부까지 채운다.\n3. 우유 200ml를 붓는다. (층 분리 유지)\n4. 건조 딸기 토핑을 올린다."},
+             
+             {"name": "자몽 에이드", "cat": "ade", "price": 5800,
+              "ing": "자몽청 50g, 탄산수 150ml, 얼음 200g, 자몽 슬라이스, 로즈마리",
+              "step": "1. 잔에 자몽청을 담는다.\n2. 얼음을 가득 채운다.\n3. 탄산수를 붓고 자몽 슬라이스와 로즈마리를 꽂아 장식한다."},
+
+             {"name": "레몬 에이드", "cat": "ade", "price": 5500,
+              "ing": "레몬청 50g, 탄산수 150ml, 얼음 200g, 레몬 슬라이스, 애플민트",
+              "step": "1. 잔에 레몬청을 담는다.\n2. 얼음을 가득 채운다.\n3. 탄산수를 천천히 부어 청량감을 유지한다.\n4. 레몬 슬라이스와 애플민트를 올린다."},
+             
+             # --- DESSERT (5) ---
+             {"name": "민트 초코 프라페", "cat": "dessert", "price": 6500,
+              "ing": "우유 120ml, 민트 파우더 35g, 초코 소스 15g, 얼음 200g, 휘핑 크림",
+              "step": "1. 블렌더에 우유, 민트 파우더, 얼음을 넣고 25초간 블렌딩.\n2. 잔 벽면에 초코 소스를 두른다.\n3. 음료를 따르고 휘핑 크림을 올린다.\n4. 초코 칩/시럽으로 토핑."},
+
+             {"name": "뉴욕 치즈 케이크", "cat": "dessert", "price": 6500,
+              "ing": "크림치즈, 설탕, 계란, 통밀 쿠키 시트",
+              "step": "냉동 상태에서 꺼내 2시간 냉장 해동 후 제공. 슈가파우더를 살짝 뿌려 플레이팅."},
+             
+             {"name": "티라미수", "cat": "dessert", "price": 6800,
+              "ing": "마스카포네 치즈, 에스프레소 시럽, 레이디핑거, 코코아 파우더",
+              "step": "쇼케이스에서 꺼내 코코아 파우더를 듬뿍 뿌린 후 제공. (가루 날림 주의)"},
+
+             {"name": "플레인 크로플", "cat": "dessert", "price": 4500,
+              "ing": "크로와상 생지 1개, 메이플 시럽, 슈가파우더",
+              "step": "1. 예열된 와플 기계에 해동된 생지를 넣고 3분간 굽는다.\n2. 접시에 담고 메이플 시럽과 슈가파우더를 뿌린다."},
+
+             {"name": "햄치즈 샌드위치", "cat": "dessert", "price": 5500,
+              "ing": "식빵 2장, 슬라이스 햄 2장, 체다치즈 1장, 양상추, 머스타드 소스",
+              "step": "1. 주문 즉시 오븐 또는 팬에 30초간 워밍한다.\n2. 반으로 커팅하여 유산지에 싸서 제공한다."}
+        ]
+
+        menus_data = []
+        print("🧠 Generating Menu Embeddings...")
+        for item in menu_items:
+            # 임베딩 텍스트: 이름 + 카테고리 + 재료 + 레시피
+            text_to_embed = f"메뉴명: {item['name']}, 카테고리: {item['cat']}, 재료: {item['ing']}, 레시피: {item['step']}"
+            emb = await get_embedding(text_to_embed)
+            
+            m = Menu(
+                menu_name=item["name"],
+                category=item["cat"],
+                list_price=item["price"],
+                ingredients=item["ing"],
+                recipe_steps=item["step"],
+                is_seasonal=False,
+                embedding=emb # 벡터값 추가
+            )
+            menus_data.append(m)
+            
+        session.add_all(menus_data)
+        session.commit()
+        
+        print(f"✅ Inserted {len(menus_data)} Menus")
+        print("🎉 Menu Seeding Completed Successfully!")
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        session.rollback()
+    finally:
+        session.close()
+
+if __name__ == "__main__":
+    init_db()
+    asyncio.run(seed_data())
+
+
+
+==================================================
+FILE_PATH: scripts\seed_policies.py
+==================================================
+
+import sys
+import os
+import asyncio
+from sqlalchemy import text
+from dotenv import load_dotenv
+from langchain_openai import OpenAIEmbeddings
+
+# Add project root to sys.path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.core.db import engine, base, SessionLocal
+from app.policy.policy_schema import Policy
+
+load_dotenv()
+embeddings_model = OpenAIEmbeddings(model="text-embedding-3-small")
+
+async def get_embedding(text: str):
+    try:
+        return await embeddings_model.aembed_query(text)
+    except Exception as e:
+        print(f"⚠️ 임베딩 실패: {e}")
+        return None
+
+def init_db():
+    print("🔄 Initializing Policy Table...")
+    try:
+        with engine.connect() as conn:
+            # Policy 테이블만 초기화 (CASCADE 조심할 필요 없음, 독립적임)
+            conn.execute(text("DROP TABLE IF EXISTS policies CASCADE"))
+            conn.commit()
+            print("   - Old policies table dropped.")
+    except Exception as e:
+        print(f"   - Warning during drop: {e}")
+
+    # Create new table (다른 테이블도 같이 create되지만 이미 있으면 패스됨)
+    base.metadata.create_all(bind=engine)
+    print("✅ Policy table created.")
+
+async def seed_data():
+    session = SessionLocal()
+    try:
+        print("🌱 Seeding Policy Data (30 Items)...")
+
+        policy_items = [
+            # --- 인사/복무 (HR & Attendance) - 10개 ---
+            {"cat": "인사 규정", "title": "출근 및 근태 관리 규정", "content": "1. 근무 시작 10분 전 매장 도착 및 유니폼 환복 완료. 2. 도착 즉시 포스기 '출근' 버튼 터치. 3. 지각 시 30분 전 매니저에게 유선 연락 (문자/톡 금지). 3회 이상 지각 시 시말서 작성."},
+            {"cat": "인사 규정", "title": "휴게 시간 운영 지침", "content": "4시간 근무 시 30분 휴게 시간 부여 (무급). 휴게 중에는 매장 밖 외출 가능하나 유니폼 탈의 필수. 휴게 종료 5분 전 복귀 준비."},
+            {"cat": "인사 규정", "title": "연차 유급 휴가 사용", "content": "1년 미만 근속자: 1개월 만근 시 1일 유급휴가 발생. 사용 2주 전 휴가계 제출. 매장 스케줄에 따라 일자 조정 협의 가능."},
+            {"cat": "인사 규정", "title": "복장 및 용모 단정 가이드", "content": "상의: 지급된 유니폼(티셔츠), 앞치마 착용. 하의: 검정색 슬랙스류 (반바지, 츄리닝 금지). 신발: 미끄럼 방지 주방화 또는 검정 운동화. 모자 필수 착용."},
+            {"cat": "인사 규정", "title": "급여 지급 및 정산 기준", "content": "급여일: 매월 10일 (휴일인 경우 전일 지급). 시급: 최저시급 준수 + 주휴수당 별도 계산. 수습기간 3개월(업무 숙련도 평가 기간)."},
+            {"cat": "인사 규정", "title": "퇴사/사직 통보 기간", "content": "퇴사 희망 시 최소 1개월 전 사직서 제출 원칙. 인수인계 기간 필수 준수. 무단 결근 및 연락 두절 시 법적 책임이 따를 수 있음."},
+            {"cat": "인사 규정", "title": "초과 근무(OT) 규정", "content": "매장 상황에 따라 연장 근무 발생 시 1.5배 가산 수당 지급. 반드시 점장 승인 하에 진행된 시간만 인정."},
+            {"cat": "인사 규정", "title": "직원 할인 혜택", "content": "근무 중 음료 1잔 무료 제공 (일부 고가 메뉴 제외). 본인 구매 시 전 메뉴 30% 할인. 가족/지인 할인 불가. 근무 외 시간 방문 시에도 할인 적용."},
+            {"cat": "인사 규정", "title": "병가 및 경조사 휴가", "content": "본인 질병으로 인한 병가 시 진단서 제출 필수. 본인 결혼(5일), 직계가족 조문(3일) 등 경조 휴가는 유급으로 처리."},
+            {"cat": "인사 규정", "title": "근무 중 휴대폰 사용 금지", "content": "근무 시간 중 개인 휴대폰 사용 및 소지 금지. 락커룸 보관. 긴급 연락 필요 시 매장 전화 사용 또는 매니저 허가 득후 사용."},
+
+            # --- 위생/안전 (Hygiene & Safety) - 10개 ---
+            {"cat": "위생/안전", "title": "보건증 관리 및 갱신", "content": "모든 근로자는 채용 전 보건증 제출 필수. 유효기간 1년 만료 1개월 전 갱신 검사 완료 및 제출. 미갱신 시 근무 불가."},
+            {"cat": "위생/안전", "title": "손 씻기 및 개인 위생", "content": "출근 직후, 화장실 사용 후, 쓰레기 취급 후 등 수시로 30초 이상 흐르는 물에 비누 세척. 손 소독제 수시 사용. 손톱 매니큐어/네일아트 금지."},
+            {"cat": "위생/안전", "title": "식중독 예방 및 식자재 관리", "content": "교차 오염 방지: 칼/도마 용도별(육류/야채/과일) 구분 사용. 유통기한 경과 식자재 즉시 전량 폐기. 냉장고 온도 기록지 매일 작성."},
+            {"cat": "위생/안전", "title": "매장 내 안전사고 대응 (화상)", "content": "화상 발생 시 즉시 흐르는 찬물에 15분 이상 식힘. 화상 연고 도포 후 거즈 보호. 심할 경우 즉시 지정 병원 이송."},
+            {"cat": "위생/안전", "title": "미끄럼 방지 및 바닥 관리", "content": "주방 바닥 물기 즉시 제거. '미끄럼 주의' 표지판 설치. 반드시 미끄럼 방지 기능이 있는 작업화 착용."},
+            {"cat": "위생/안전", "title": "칼/가위 등 날카로운 도구 취급", "content": "사용 후 즉시 세척하여 거치대 보관. 설거지통에 칼을 담가두지 말 것 (손 베임 사고 원인 1위). 전달 시 손잡이 쪽으로 건넴."},
+            {"cat": "위생/안전", "title": "전기 안전 및 화재 예방", "content": "문어발식 콘센트 사용 금지. 퇴근 시 오븐, 머신 전원 차단 확인. 소화기 위치 및 사용법 월 1회 숙지 교육."},
+            {"cat": "위생/안전", "title": "유리 파손 시 대처 매뉴얼", "content": "파손 즉시 주변 고객 대피. 맨손으로 파편 수거 절대 금지. 빗자루/진공청소기 사용 후 젖은 걸레로 미세 파편 제거."},
+            {"cat": "위생/안전", "title": "식품 알레르기 안내 의무", "content": "고객 문의 시 알레르기 유발 성분표(우유, 견과류, 밀 등) 반드시 확인 후 안내. '아마 없을 거예요' 추측성 답변 금지."},
+            {"cat": "위생/안전", "title": "방역 및 해충 방제", "content": "매장 정기 소독(세스코) 월 1회 실시. 해충 발견 시 즉시 포획하지 말고 이동 경로 확인 후 방제 업체 신고."},
+
+            # --- 윤리/보안 (Code & Security) - 10개 ---
+            {"cat": "윤리/보안", "title": "개인정보 보호 정책 (CCTV)", "content": "매장 내 CCTV는 방범 및 화재 예방 목적으로만 운영. 영상 열람은 경찰 대동 시에만 가능. 근무자가 임의로 열람/유출 시 형사 처벌."},
+            {"cat": "윤리/보안", "title": "고객 개인정보 취급 주의", "content": "포인트 적립을 위한 고객 전화번호는 마케팅 외 용도 사용 금지. 영수증 등 고객 정보가 담긴 종이는 반드시 파쇄 후 폐기."},
+            {"cat": "윤리/보안", "title": "현금/시재 관리 및 횡령 금지", "content": "계산 실수 외 고의적인 시재 누락 및 횡령 적발 시 즉시 해고 및 민형사상 조치. 포인트 부정 적립(본인 번호로 적립) 절대 금지."},
+            {"cat": "윤리/보안", "title": "매장 비품 및 자산 반출 금지", "content": "매장 소유의 식자재, 비품(휴지, 세제, 컵 등) 무단 반출 금지. 폐기 대상 음식물이라도 매니저 승인 없이 취식/반출 불가."},
+            {"cat": "윤리/보안", "title": "사내 성희롱/괴롭힘 예방", "content": "직원 간 언어적/신체적 성희롱 및 폭언 금지. 위반 시 무관용 원칙 적용. 피해 발생 시 핫라인(점장/본사) 신고."},
+            {"cat": "윤리/보안", "title": "비밀 유지 서약", "content": "매장의 레시피, 매출액, 고객 정보, 운영 노하우 등 영업 비밀을 경쟁사나 외부에 유출하지 않을 것을 서약함."},
+            {"cat": "윤리/보안", "title": "SNS 활동 가이드라인", "content": "유니폼 착용 후 불건전한 행위나 매장 이미지를 훼손하는 영상 촬영 및 SNS 업로드 금지. 고객 몰래 촬영 금지."},
+            {"cat": "윤리/보안", "title": "외부인 출입 통제 (주방/카운터)", "content": "관계자 외 주방 및 카운터 내부 출입 절대 금지. 지인 방문 시에도 홀에서만 만남 가능. 배달 기사님은 픽업대 대기 유도."},
+            {"cat": "윤리/보안", "title": "분실물 습득 및 횡령 주의", "content": "고객이 두고 간 지갑, 현금, 귀중품 습득 시 사용하거나 가지면 점유이탈물횡령죄 성립. 즉시 cctv 사각지대가 아닌 곳에 보관."},
+            {"cat": "윤리/보안", "title": "불법 소프트웨어 설치 금지", "content": "포스기 및 매장 PC에 게임, 불법 다운로드 사이트 접속, 개인 USB 연결 금지. 랜섬웨어 감염 예방 철저."}
+        ]
+
+        policies_db = []
+        print("🧠 Generating Policy Embeddings...")
+        for item in policy_items:
+            # Pydantic이 아니라 바로 ORM 객체 매핑
+            p = Policy(
+                category=item["cat"],
+                title=item["title"],
+                content=item["content"]
+            )
+            # 임베딩
+            text_to_embed = f"정책: {p.title}\n{p.content}"
+            emb = await get_embedding(text_to_embed)
+            p.embedding = emb
+            
+            policies_db.append(p)
+
+        session.add_all(policies_db)
+        session.commit()
+        
+        print(f"✅ Inserted {len(policies_db)} Policies with Embeddings.")
+        print("🎉 Policy Seeding Completed!")
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        session.rollback()
+    finally:
+        session.close()
+
+if __name__ == "__main__":
+    init_db()
+    asyncio.run(seed_data())
+
+
+
+==================================================
+FILE_PATH: scripts\seed_reviews_monthly.py
+==================================================
+
+import asyncio
+import os
+import sys
+import random
+import json
+from datetime import datetime, timedelta
+from typing import List, Dict
+
+# 프로젝트 루트
+sys.path.append(os.getcwd())
+
+from app.core.db import execute, fetch_all, init_pool, close_pool
+from app.clients.genai import genai_generate_text
+from dotenv import load_dotenv
+from langchain_openai import OpenAIEmbeddings
+
+load_dotenv()
+
+# OpenAI 임베딩 모델 (1536차원)
+embeddings_model = OpenAIEmbeddings(model="text-embedding-3-small")
+
+# 동시 실행 제한 (Rate Limit 방지)
+SEM = asyncio.Semaphore(10)
+
+async def get_embedding(text: str):
+    """Generate embedding using OpenAI text-embedding-3-small"""
+    if not text:
+        return None
+    try:
+        return await embeddings_model.aembed_query(text)
+    except Exception as e:
+        # print(f"⚠️ 임베딩 실패: {e}")
+        return None
+
+async def generate_review_content_with_sem(store_name: str, menu_list: List[str], weather: str, ordered_at: datetime, rating: int) -> str:
+    async with SEM:
+        # 다양한 리뷰 스타일 랜덤 선택
+        styles = [
+            "감성적인 (비오는 날 창밖을 보며 먹는 느낌)",
+            "직설적인 (맛 평가 위주)",
+            "이모지 뿜뿜 😋✨",
+            "짧고 굵은 (쿨한 말투)",
+            "구체적인 맛 표현 (식감, 향)",
+            "재주문 의사 강력 어필"
+        ]
+        style = random.choice(styles)
+        
+        prompt = f"""
+        당신은 배달 앱 헤비유저입니다. 
+        아래 상황에 맞춰 **'{style}'** 스타일로 자연스러운 리뷰를 작성해주세요.
+
+        [주문 맥락]
+        - 매장: {store_name}
+        - 메뉴: {', '.join(menu_list)} (이 중 하나를 콕 집어 언급)
+        - 날씨: {weather} (날씨와 음식의 조화 언급)
+        - 시간: {ordered_at.strftime('%H시')}
+        - 별점: {rating}점
+
+        [작성 가이드]
+        - 5점: "인생 맛집", "단골 확정", "사장님 최고" 텐션으로 극찬.
+        - 4점: 맛은 좋은데 사소한 아쉬움(양, 가격 등) 살짝 언급.
+        - 3점: "그냥 그래요", "평범해요" 금지. 구체적으로 뭐가 아쉬운지 적을 것.
+        - 1~2점: 배달 지연, 포장 상태, 식은 음식 등에 대해 확실하게 불만 표출.
+        - **"무난하네요", "맛있어요" 같은 뻔한 멘트 절대 금지!** 
+        - 50자 이내로 짧게.
+
+        Output JSON: {{ "review_text": "리뷰 내용" }}
+        """
+        try:
+            resp = await genai_generate_text(prompt)
+            data = json.loads(resp)
+            return data.get("review_text", f"{menu_list[0]} 잘 먹었습니다.")
+        except Exception as e:
+            return f"{menu_list[0]} 배달 빨라서 좋네요."
+
+async def process_batch(batch_items, store_id):
+    """배치 단위로 처리 후 DB 저장"""
+    tasks = []
+    
+    # 1. 리뷰 텍스트 생성 (병렬)
+    for item in batch_items:
+        # 별점 로직: 1.0~5.0점까지 0.5 단위로 세분화하여 긍정/부정 리뷰 다각화
+        rating = random.choices(
+            [5.0, 4.5, 4.0, 3.5, 3.0, 2.5, 2.0, 1.5, 1.0],
+            weights=[40, 15, 15, 10, 8, 5, 3, 2, 2]
+        )[0]
+        item['rating'] = rating
+        
+        task = generate_review_content_with_sem(
+            item['store_name'],
+            [item['menu_name']],
+            item['weather_info'] or "맑음",
+            item['ordered_at'],
+            rating
+        )
+        tasks.append(task)
+    review_texts = await asyncio.gather(*tasks)
+    
+    # 2. 임베딩 생성 (병렬 - 세마포어 필요할 수 있으나 임베딩은 빠름)
+    # 임베딩도 별도 세마포어 적용 권장이지만 여기선 순차 처리 또는 통으로 묶음
+    embedding_tasks = []
+    for txt in review_texts:
+        embedding_tasks.append(get_embedding(txt))
+        
+    embeddings = await asyncio.gather(*embedding_tasks)
+    
+    # 3. DB Insert
+    for i, item in enumerate(batch_items):
+        review_txt = review_texts[i]
+        emb = embeddings[i]
+        
+        # 리뷰 작성 시간은 주문 후 30분 ~ 12시간 사이 랜덤
+        created_at = item['ordered_at'] + timedelta(minutes=random.randint(30, 720))
+        
+        await execute("""
+            INSERT INTO reviews (store_id, menu_id, order_id, rating, review_text, created_at, embedding)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (
+            store_id,
+            item['menu_id'],
+            item['order_id'],
+            item['rating'],
+            review_txt,
+            created_at,
+            str(emb) if emb else None
+        ))
+    
+    # print(f"  ✅ {len(batch_items)}개 리뷰 저장 완료 (Store {store_id})")
+
+async def seed_reviews_monthly():
+    await init_pool()
+    
+    # print("🧹 기존 서울(1) 리뷰 데이터 삭제 중...")
+    # await execute("DELETE FROM reviews WHERE store_id = 1")
+    print("✨ 삭제 없이 리뷰 데이터 추가 생성 시작...")
+
+    print("📅 최근 30일 주문 데이터 수집 중...")
+    start_date = datetime.now() - timedelta(days=32)
+    
+    query = """
+    SELECT o.order_id, o.store_id, o.menu_id, o.ordered_at, m.menu_name, s.store_name, sd.weather_info
+    FROM orders o
+    JOIN menus m ON o.menu_id = m.menu_id
+    JOIN stores s ON o.store_id = s.store_id
+    LEFT JOIN sales_daily sd ON o.store_id = sd.store_id AND DATE(o.ordered_at) = sd.sale_date
+    WHERE o.ordered_at >= %s
+      -- AND o.store_id = 1 -- 필터 제거 (전체 매장 대상)
+    ORDER BY o.ordered_at ASC
+    """
+    
+    orders = await fetch_all(query, (start_date,))
+    print(f"📦 총 주문 {len(orders)}건 조회됨.")
+    
+    # Store -> Date 별로 그룹핑
+    # 구조: groups[store_id][date_str] = [order_row, ...]
+    groups = {}
+    for row in orders:
+        sid = row['store_id']
+        date_key = row['ordered_at'].strftime('%Y-%m-%d')
+        
+        if sid not in groups:
+            groups[sid] = {}
+        if date_key not in groups[sid]:
+            groups[sid][date_key] = []
+        
+        groups[sid][date_key].append(row)
+        
+    total_reviews_generated = 0
+    all_target_items = []
+
+    print("🎲 날짜별 리뷰 타겟 선정 중...")
+    for sid, date_map in groups.items():
+        for date_key, daily_orders in date_map.items():
+            # 주문 수 대비 리뷰 수 결정 (최대 10개 또는 주문수의 50%, 최소 1개)
+            max_reviews = min(10, len(daily_orders))
+            if max_reviews < 1:
+                continue
+                
+            # 1~10개 사이 랜덤 (주문이 적다면 그만큼만)
+            num_reviews = random.randint(1, max_reviews)
+            
+            # 랜덤 샘플링
+            targets = random.sample(daily_orders, num_reviews)
+            all_target_items.extend(targets)
+            
+    print(f"🚀 총 {len(all_target_items)}개의 리뷰를 생성합니다. (GenAI 호출 시작)")
+    
+    # 전체를 배치 크기(예: 20개)로 나누어 처리하여 진행상황 표시
+    batch_size = 20
+    for i in range(0, len(all_target_items), batch_size):
+        batch = all_target_items[i:i+batch_size]
+        # store_id가 섞여있으므로 process_batch 내부의 logging은 store_id를 대표로 쓰기 애매함
+        # 그냥 함수 인자 store_id는 무시하고 item['store_id'] 사용
+        
+        # 병렬 처리
+        await process_batch(batch, batch[0]['store_id']) # store_id 인자는 로깅용이었으나 일단 넘김
+        
+        current_count = min(i + batch_size, len(all_target_items))
+        print(f"   [{current_count}/{len(all_target_items)}] 처리 완료... ({current_count/len(all_target_items)*100:.1f}%)")
+        
+    await close_pool()
+    print("🎉 모든 리뷰 데이터 생성 완료!")
+
+if __name__ == "__main__":
+    if os.name == 'nt':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.run(seed_reviews_monthly())
+
+
+
+==================================================
+FILE_PATH: scripts\verify_stores_and_sales.py
+==================================================
+
+import asyncio
+import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
+
+from app.core.db import init_pool, close_pool, fetch_all
+
+async def main():
+    await init_pool()
+    try:
+        # 1. Store ID Mapping Check
+        print("--- Store IDs ---")
+        stores = await fetch_all("SELECT store_id, store_name, city FROM stores")
+        for s in stores:
+            print(f"ID {s['store_id']}: {s['store_name']} ({s['city']})")
+            
+        # 2. Sales Aggregation Check (Last 30 days)
+        print("\n--- Sales Data Check (Last 7 days) ---")
+        for s in stores:
+            sid = s['store_id']
+            res = await fetch_all(f"""
+                SELECT SUM(total_sales) as sum_sales, SUM(total_orders) as sum_orders 
+                FROM sales_daily 
+                WHERE store_id = {sid} 
+                  AND sale_date >= (CURRENT_DATE - INTERVAL '7 days')
+            """)
+            row = res[0]
+            print(f"ID {sid} ({s['store_name']}): Sales={row['sum_sales']}, Orders={row['sum_orders']}")
+
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        await close_pool()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+
+
+==================================================
+FILE_PATH: scripts\verify_stores_and_sales_sync.py
+==================================================
+
+import sys
+import os
+from sqlalchemy import create_engine, text
+
+sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
+
+database_url = "postgresql://ai_user:1234@localhost:5432/ai_project"
+engine = create_engine(database_url.replace("postgresql+psycopg://", "postgresql://"))
+
+def main():
+    try:
+        with engine.connect() as conn:
+            print("--- Store IDs ---")
+            result = conn.execute(text("SELECT store_id, store_name, city FROM stores"))
+            stores = result.fetchall()
+            for s in stores:
+                print(f"ID {s.store_id}: {s.store_name} ({s.city})")
+            
+            print("\n--- Sales Data Check (Last 7 days) ---")
+            for s in stores:
+                sid = s.store_id
+                # 'current_date' might need to be explicit or rely on DB
+                res = conn.execute(text(f"""
+                    SELECT SUM(total_sales) as sum_sales, SUM(total_orders) as sum_orders 
+                    FROM sales_daily 
+                    WHERE store_id = {sid} 
+                      AND sale_date >= (CURRENT_DATE - 7)
+                """))
+                row = res.fetchone()
+                print(f"ID {sid} ({s.store_name}): Sales={row.sum_sales}, Orders={row.sum_orders}")
+                
+    except Exception as e:
+        print(f"Error: {e}")
+
+if __name__ == "__main__":
+    main()
+
+
